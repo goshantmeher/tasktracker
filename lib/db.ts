@@ -1,4 +1,4 @@
-import { Databases, ID, Query, type Models } from 'node-appwrite'
+import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwrite'
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
 import { STATUSES, type Status, type Task, type TaskInput, type Project } from './shared'
@@ -6,6 +6,19 @@ import { STATUSES, type Status, type Task, type TaskInput, type Project } from '
 // NOTE: written against node-appwrite's `Databases` API. If the installed SDK
 // exposes `TablesDB` instead, see Task 1 Step 2 for the name translation.
 const db = () => new Databases(serverClient())
+
+// Query.limit(100) used to be the default here, which silently truncated any
+// list past 100 results with no error or warning. Verified against this
+// server (Appwrite 1.9.0): its own validation accepts a limit up to the
+// int64 ceiling (9,223,372,036,854,775,807), and a real result set is NOT
+// clamped below the requested limit — with 150 real documents, limit(101)
+// returned 101 and limit(1000) returned all 150. So 100 was never a
+// server-imposed cap. This default is generous instead of arbitrary; the
+// real ceiling is response size / memory for very large result sets. If a
+// project or column ever realistically needs more than this in one call,
+// switch to cursor-based pagination (Query.cursorAfter) rather than raising
+// this further.
+const DEFAULT_LIST_LIMIT = 5000
 
 // Re-exported so server-side callers have one import site. Client components
 // and middleware must import these from './shared' directly instead.
@@ -37,8 +50,20 @@ async function docById<T>(
 ): Promise<T | null> {
   try {
     return toModel(await db().getDocument(DB, collection, id))
-  } catch {
-    return null
+  } catch (e) {
+    // Only a real "no such document" is absence. Anything else — a network
+    // failure, an unauthorized key, a malformed id, a misconfigured
+    // collection — must propagate, not be reported to the caller as a 404.
+    // Verified against live Appwrite: not-found is an AppwriteException with
+    // code 404 and type 'document_not_found' specifically. A bad id is code
+    // 400 general_argument_invalid; an unauthorized key is 401
+    // user_unauthorized; an unknown collection is 404 collection_not_found
+    // (a real config error, not a missing document); a network failure
+    // isn't an AppwriteException at all (it's a plain fetch TypeError).
+    if (e instanceof AppwriteException && e.code === 404 && e.type === 'document_not_found') {
+      return null
+    }
+    throw e
   }
 }
 
@@ -71,7 +96,7 @@ export function slugify(name: string) {
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const all = await listDocs('projects', [Query.orderAsc('name'), Query.limit(100)], toProject)
+  const all = await listDocs('projects', [Query.orderAsc('name'), Query.limit(DEFAULT_LIST_LIMIT)], toProject)
   // Archived sort below the rest, per the spec.
   return [...all.filter(p => !p.archived), ...all.filter(p => p.archived)]
 }
@@ -126,8 +151,13 @@ export async function listTasks(f: TaskFilter): Promise<Task[]> {
   if (f.status?.length) q.push(Query.equal('status', f.status))
   if (f.type?.length) q.push(Query.equal('type', f.type))
   if (f.assignee) q.push(Query.equal('assignee', f.assignee))
-  if (f.label) q.push(Query.contains('labels', f.label))
-  q.push(Query.limit(f.limit ?? 100))
+  // `labels` is an array attribute. Query.contains happens to work here too
+  // (verified against live Appwrite), but the SDK's own doc comment says
+  // array attributes should use containsAny/containsAll instead, so that's
+  // what this uses — the documented contract, not a coincidence that could
+  // break on a future server/SDK version.
+  if (f.label) q.push(Query.containsAny('labels', [f.label]))
+  q.push(Query.limit(f.limit ?? DEFAULT_LIST_LIMIT))
   const tasks = await listDocs('tasks', q, toTask)
   // Group by status in the canonical column order, ordered within each column.
   return tasks.sort((a, b) =>

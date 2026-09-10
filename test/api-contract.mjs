@@ -77,6 +77,18 @@ check('defaults and explicit values both applied',
   check('POST to an unknown project is a 404', r2.status === 404)
 }
 
+// --- fix round 1: enum presence vs truthiness (Finding 1) ---------------
+// `status: ""` is present but falsy. A truthiness guard (`body[field] &&`)
+// skips validation entirely and lets the empty string reach Appwrite's enum
+// write as an uncaught 500. A presence guard (`field in body`) catches it.
+{
+  const r = await api('/api/tasks', {
+    method: 'POST',
+    body: JSON.stringify({ project: project.slug, title: 'empty status probe', status: '' }),
+  })
+  check('POST with status: "" is a 400, not a 500', r.status === 400)
+}
+
 // --- list / filter ------------------------------------------------------
 {
   const r = await api(`/api/tasks?project=${project.slug}&status=todo`)
@@ -111,6 +123,12 @@ check('defaults and explicit values both applied',
     method: 'PATCH', body: JSON.stringify({ projectId: 'somewhere-else' }),
   })
   check('PATCH with no writable field is a 400', nothing.status === 400)
+
+  // Fix round 1, Finding 1 — same presence-vs-truthiness bug on the PATCH side.
+  const emptyStatus = await api(`/api/tasks/${id}`, {
+    method: 'PATCH', body: JSON.stringify({ status: '' }),
+  })
+  check('PATCH with status: "" is a 400, not a 500', emptyStatus.status === 400)
 }
 
 // --- move between columns ----------------------------------------------
@@ -143,6 +161,14 @@ check('defaults and explicit values both applied',
   })
   check('a client-supplied author is ignored — the entry is still attributed to the key',
     spoofed.status === 201 && spoofed.body.author === keyRecord.label)
+
+  // Fix round 1, Finding 2 (Ruling 62): an empty array for a task id that
+  // does not exist is indistinguishable from "this task exists and has no
+  // history" — the same swallow-absence-as-data defect already fixed once
+  // in getTask. GET must 404 like every other handler, matching what POST
+  // on this same route already does.
+  const missing = await api('/api/tasks/does-not-exist-fixround1/log')
+  check('GET log on an unknown task id is a 404, not an empty list', missing.status === 404)
 }
 
 // --- both doors at once (Ruling 56) --------------------------------------

@@ -70,7 +70,12 @@ export async function POST(req: Request) {
   for (const [field, allowed] of [
     ['status', STATUSES], ['type', TYPES], ['priority', PRIORITIES],
   ] as const) {
-    if (body[field] && !(allowed as readonly string[]).includes(body[field]))
+    // Presence, not truthiness: `field in body` catches `status: ""` (and
+    // `null`), which `body[field] &&` would let through — falsy skips the
+    // check, then the empty string reaches Appwrite's enum write as an
+    // uncaught 500 instead of a 400. A caller who sent the key deserves an
+    // answer about it, even if the value they sent is the empty string.
+    if (field in body && !(allowed as readonly string[]).includes(body[field]))
       return bad(`${field} must be one of: ${allowed.join(', ')}`)
   }
 

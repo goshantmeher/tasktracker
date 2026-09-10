@@ -27,7 +27,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   for (const [field, allowed] of [
     ['status', STATUSES], ['type', TYPES], ['priority', PRIORITIES],
   ] as const) {
-    if (body[field] && !(allowed as readonly string[]).includes(body[field]))
+    // Presence, not truthiness — see the matching comment in
+    // app/api/tasks/route.ts. `status: ""` must 400, not slip through and
+    // reach Appwrite's enum write as an uncaught 500.
+    if (field in body && !(allowed as readonly string[]).includes(body[field]))
       return bad(`${field} must be one of: ${allowed.join(', ')}`)
   }
 

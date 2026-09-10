@@ -27,5 +27,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const caller = await requireCaller(req)
   if (isResponse(caller)) return caller
-  return json({ entries: await listLog((await ctx.params).id) })
+  const { id } = await ctx.params
+  // Ruling 62: an empty array for a nonexistent task is indistinguishable
+  // from a real task with no history — the same swallow-absence-as-data
+  // defect this codebase already fixed once in getTask. This endpoint's
+  // entire audience is an agent that cannot tell the two apart, so 404
+  // instead of overriding the brief's reference code, which never checked.
+  if (!(await getTask(id))) return bad('no such task', 404)
+  return json({ entries: await listLog(id) })
 }

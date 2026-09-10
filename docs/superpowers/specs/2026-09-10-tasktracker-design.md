@@ -93,7 +93,11 @@ duplicated.
 |---|---|---|
 | projectId | string(36) | required, indexed |
 | title | string(256) | required |
-| description | string(65535) | optional, markdown |
+| description | string(65535) | optional, markdown — what the task is |
+| requirement | string(65535) | optional, markdown — what done looks like |
+| prerequisites | string(65535) | optional, markdown — what must be true first |
+| result | string(65535) | optional, markdown — what actually happened |
+| notes | string(65535) | optional, markdown — standing context |
 | type | enum | `bug` \| `feature` \| `chore`, default `feature` |
 | status | enum | `backlog` \| `todo` \| `in_progress` \| `blocked` \| `done`, default `backlog` |
 | priority | enum | `low` \| `medium` \| `high` \| `urgent`, default `medium` |
@@ -102,6 +106,20 @@ duplicated.
 | order | double | required; position within its column |
 
 Indexes: `(projectId, status)`, `(projectId, order)`.
+
+The five long-text fields are all markdown and all optional. They are separate
+attributes rather than one body with headings so that a caller can write one
+without rewriting the others — Claude appending a `result` must not be able to
+clobber a `requirement` the human wrote — and so `/api/context` can include
+the setup fields while omitting results for tasks that are not finished.
+
+Appwrite stores string attributes of this size off-row, so five per document
+is not a document-size concern.
+
+`notes` and the `worklog` collection overlap by intent and are kept distinct:
+`worklog` is append-only and timestamped (what happened, in order), `notes` is
+a single editable field (context that stays true). If one goes unused in
+practice, drop it rather than maintaining both.
 
 Statuses are a fixed set, not per-board configuration. Configurable columns
 mean a columns collection, ordering UI, and a migration path whenever one is
@@ -216,15 +234,18 @@ status then `order`.
 ### `POST /api/tasks`
 
 Body: `project` (slug, required), `title` (required), and optionally
-`description`, `type`, `status`, `priority`, `assignee`, `labels`.
+`description`, `requirement`, `prerequisites`, `result`, `notes`, `type`,
+`status`, `priority`, `assignee`, `labels`.
 
 Defaults apply for anything omitted. `order` is assigned automatically at the
 bottom of the target column. Returns the created task with 201.
 
 ### `PATCH /api/tasks/:id`
 
-Body is any subset of `title`, `description`, `type`, `status`, `priority`,
-`assignee`, `labels`, `order`. `projectId` is not writable — tasks do not move
+Body is any subset of `title`, `description`, `requirement`, `prerequisites`,
+`result`, `notes`, `type`, `status`, `priority`, `assignee`, `labels`,
+`order`. Fields omitted from the body are left untouched, so a caller can
+write `result` alone without resending the rest. `projectId` is not writable — tasks do not move
 between projects. Returns the updated task.
 
 ### `POST /api/tasks/:id/log`
@@ -237,8 +258,10 @@ the created entry with 201.
 ### `GET /api/context?project=<slug>`
 
 Returns `text/markdown`: the whole board rendered for an agent to read in one
-call — open tasks grouped by status, each with its description, and the most
-recent work log entries per task. Done tasks are summarised as titles only.
+call — open tasks grouped by status, each with its `description`,
+`requirement`, `prerequisites` and `notes` (omitting whichever are empty), and
+the most recent work log entries per task. `result` is included only for tasks
+in `done`, which are otherwise summarised as titles only.
 
 This endpoint is the point of the system. One call at the start of a session
 brings Claude current on everything the human added through the UI, and unlike
@@ -255,10 +278,25 @@ Five screens, no more.
 - **`/p/[slug]`** — the board. Five columns, drag-and-drop between them. Each
   card shows title, type, priority, assignee and labels. A "+" per column
   creates a task inline.
-- **`/p/[slug]/t/[id]`** — task detail. Editable fields, description, and the
-  work log stream in chronological order with an entry box.
+- **`/p/[slug]/t/[id]`** — task detail. The scalar fields (type, status,
+  priority, assignee, labels), then the five markdown sections — description,
+  requirement, prerequisites, result, notes — then the work log stream in
+  chronological order with an entry box.
 - **`/settings/keys`** — list API keys by label and last use; create one
   (shown once); revoke one.
+
+### Markdown rendering
+
+The five markdown fields render as formatted markdown by default and swap to a
+plain `<textarea>` on click, saving on blur via a server action. No WYSIWYG
+editor, no split-pane preview — click to edit, click away to render.
+
+Rendering uses `react-markdown` with `remark-gfm`, which brings tables and
+task lists (useful in requirements and prerequisites). `rehype-raw` is
+deliberately not used: without it `react-markdown` never renders embedded HTML
+and never touches `dangerouslySetInnerHTML`, so untrusted content in a task
+field cannot become script. Any future need for raw HTML in these fields must
+add sanitisation at the same time.
 
 Drag-and-drop uses `useOptimistic` plus a server action and `revalidatePath`:
 the card moves immediately and snaps back if the write fails.
@@ -269,8 +307,9 @@ No dashboard, no charts, no cross-project view, no settings beyond keys.
 
 One file, `test-api.mjs`, run against a running dev instance. It exercises the
 full contract in sequence — create a task, list it, move it between columns,
-append a work log entry, fetch `/api/context` and assert the task appears
-under the right heading — and asserts each result. It additionally performs
+append a work log entry, `PATCH` only `result` and assert the other four
+markdown fields survived untouched, fetch `/api/context` and assert the task
+appears under the right heading — and asserts each result. It additionally performs
 one operation via session cookie and the equivalent via API key, asserting
 both land identically, which is the property that keeps the two front doors
 honest.

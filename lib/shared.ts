@@ -36,6 +36,28 @@ export type LogEntry = {
   id: string; taskId: string; author: string; body: string; createdAt: string
 }
 
+// Declared Appwrite attribute sizes for tasks.* string columns, read from
+// scripts/setup-appwrite.mjs — not guessed. Both front doors enforce these
+// identically: app/api/_util.ts at the REST boundary, and the server actions
+// in app/p/[slug]/actions.ts for the human's board/detail forms. Kept here,
+// not in either door's own module, so there is exactly one copy to import
+// from a 'use server' file and a route handler alike.
+export const TASK_STRING_MAX: Record<string, number> = {
+  title: 256,
+  assignee: 64,
+  description: 65535,
+  requirement: 65535,
+  prerequisites: 65535,
+  result: 65535,
+  notes: 65535,
+}
+export const LABEL_MAX = 64 // tasks.labels: string array, each element size 64
+// Not an Appwrite column limit — an app-level cap so the labels UI stays
+// usable. Enforced on both doors so writing past it always gets a clear
+// rejection instead of one door silently dropping what the other wrote.
+export const LABEL_COUNT_MAX = 20
+export const LOG_BODY_MAX = 65535
+
 /**
  * Whitelists a raw string against an allowed set of values — the check
  * behind every `pick(name, allowed)` helper that reads a scalar enum field

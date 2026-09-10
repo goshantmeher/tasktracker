@@ -7,7 +7,22 @@ import {
   createTask, updateTask, getProjectBySlug, getTask, addLog,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Status, type TaskInput,
 } from '@/lib/db'
-import { isAllowed, resolveAuthor } from '@/lib/shared'
+import {
+  isAllowed, resolveAuthor, TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX,
+} from '@/lib/shared'
+
+/**
+ * Same TASK_STRING_MAX a REST write checks (app/api/_util.ts) against the
+ * same declared Appwrite column sizes (scripts/setup-appwrite.mjs) — so a
+ * human's Save is held to the same limit an agent's PATCH already is,
+ * instead of reaching Appwrite unchecked and throwing.
+ */
+function checkLength(field: string, value: string): void {
+  const max = TASK_STRING_MAX[field]
+  if (max !== undefined && value.length > max) {
+    throw new Error(`${field} must be at most ${max} characters`)
+  }
+}
 
 async function requireUser() {
   if (!(await currentUser())) redirect('/login')
@@ -32,6 +47,11 @@ export async function quickAddTask(slug: string, formData: FormData) {
   await requireUser()
   const title = String(formData.get('title') ?? '').trim()
   if (!title) return
+  // Same declared column size (tasks.title, 256) the REST door rejects an
+  // over-length title against. Thrown, not silently truncated, so the
+  // client-side wrapper (see board.tsx's QuickAdd) can keep what the user
+  // typed on screen instead of losing it to the route's error boundary.
+  checkLength('title', title)
   const project = await getProjectBySlug(slug)
   if (!project) return
   // Whitelist, not passthrough — `status` arrives from the client (a
@@ -74,6 +94,10 @@ export async function saveField(slug: string, taskId: string, field: string, val
   if (!(MD_FIELDS as readonly string[]).includes(field) && field !== 'title') {
     throw new Error(`not a writable text field: ${field}`)
   }
+  // Same declared column size the REST door checks. Thrown before the
+  // write, same as ownedTask's guards below — detail.tsx's MarkdownField
+  // already catches this and keeps the editor open with the typed text.
+  checkLength(field, value)
   await ownedTask(slug, taskId)
   await updateTask(taskId, { [field]: value } as Partial<TaskInput>)
   revalidatePath(`/p/${slug}/t/${taskId}`)
@@ -82,18 +106,46 @@ export async function saveField(slug: string, taskId: string, field: string, val
 
 export async function saveScalars(slug: string, taskId: string, formData: FormData) {
   await requireUser()
-  await ownedTask(slug, taskId)
+  const task = await ownedTask(slug, taskId)
   const pick = <T extends readonly string[]>(name: string, allowed: T) => {
     const v = String(formData.get(name) ?? '')
     return isAllowed(v, allowed) ? v : undefined
   }
+
+  // Same TASK_STRING_MAX.assignee the REST door 400s an over-length
+  // assignee against — thrown, not `.slice(0, 64)`'d away. Truncating an
+  // over-length write is exactly the silent-corruption behaviour this
+  // field's REST-side check exists to avoid; the human's Save must refuse
+  // it the same way, not do it quietly.
+  const assignee = String(formData.get('assignee') ?? '')
+  checkLength('assignee', assignee)
+
+  // `labels` only round-trips safely through this comma-separated text box
+  // when nothing in it contains a comma — the box's own delimiter. Only
+  // re-derive the array when the field actually changed (comparing against
+  // the same `.join(', ')` the input's defaultValue was built from):
+  // leaving it alone otherwise is what stops a human saving *just* status
+  // from silently rewriting labels an agent wrote over the REST API, which
+  // never touches this box at all. When it did change and an existing label
+  // already contains a comma, refuse rather than silently re-split it into
+  // two — this text box cannot represent that safely.
+  const rawLabels = String(formData.get('labels') ?? '')
+  let labels: string[] | undefined
+  if (rawLabels !== task.labels.join(', ')) {
+    if (task.labels.some(l => l.includes(',')))
+      throw new Error('existing labels contain a comma and cannot be edited from this field — use the API')
+    labels = rawLabels.split(',').map(s => s.trim()).filter(Boolean)
+    if (labels.length > LABEL_COUNT_MAX) throw new Error(`labels: at most ${LABEL_COUNT_MAX} allowed`)
+    if (labels.some(l => l.length > LABEL_MAX))
+      throw new Error(`labels: each at most ${LABEL_MAX} characters`)
+  }
+
   await updateTask(taskId, {
     status: pick('status', STATUSES) as Status,
     type: pick('type', TYPES) as TaskInput['type'],
     priority: pick('priority', PRIORITIES) as TaskInput['priority'],
-    assignee: String(formData.get('assignee') ?? '').slice(0, 64),
-    labels: String(formData.get('labels') ?? '')
-      .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20),
+    assignee,
+    ...(labels !== undefined ? { labels } : {}),
   })
   revalidatePath(`/p/${slug}/t/${taskId}`)
   revalidatePath(`/p/${slug}`)

@@ -1,11 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useOptimistic, useTransition, useState } from 'react'
+import { useOptimistic, useTransition, useState, type FormEvent } from 'react'
 import { nextOrder } from '@/lib/order.mjs'
 // From '@/lib/shared', never '@/lib/db' — this is a client component, and
 // lib/db imports node-appwrite. See Task 11 Step 6, which verifies this.
-import { STATUSES, type Status, type Task } from '@/lib/shared'
+import { STATUSES, TASK_STRING_MAX, type Status, type Task } from '@/lib/shared'
 import { moveTask, quickAddTask } from './actions'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +17,59 @@ const LABELS: Record<Status, string> = {
 }
 const PRIORITY_DOT: Record<string, string> = {
   low: 'bg-gray-300', medium: 'bg-blue-400', high: 'bg-amber-500', urgent: 'bg-red-500',
+}
+
+/**
+ * quickAddTask now throws on an over-length title (same tasks.title column
+ * size the REST door checks) instead of letting Appwrite reject it — thrown
+ * from a bare `<form action={quickAddTask.bind(...)}>` bubbles straight to
+ * the nearest error boundary, replacing the whole board and losing whatever
+ * the user typed. Wrapping the call here (same recoverable pattern as
+ * detail.tsx's MarkdownField/ScalarForm) keeps the typed title on screen and
+ * shows why it wasn't added, instead of losing it.
+ */
+function QuickAdd({ slug, status }: { slug: string; status: Status }) {
+  const [error, setError] = useState<string | null>(null)
+  const [pending, start] = useTransition()
+
+  // Plain onSubmit + preventDefault, not `<form action={fn}>` — see
+  // detail.tsx's ScalarForm doc comment for why: React resets an
+  // uncontrolled form's fields whenever an `action` function settles,
+  // including a rejected save this component's own catch turned into
+  // `error` state, which would silently wipe the title the user just typed
+  // right as it's told them the add failed.
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget
+    const formData = new FormData(form)
+    start(async () => {
+      try {
+        await quickAddTask(slug, formData)
+        setError(null)
+        // The old `<form action={quickAddTask.bind(...)}>` cleared the title
+        // for the next add as a side effect of React's post-action reset.
+        // onSubmit doesn't do that, so it's done explicitly here — only on
+        // success, so a failed add still leaves the typed title in place.
+        form.reset()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'add failed')
+      }
+    })
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-2">
+      <input type="hidden" name="status" value={status} />
+      <Input
+        name="title"
+        placeholder="+ Add"
+        maxLength={TASK_STRING_MAX.title}
+        disabled={pending}
+        className="border-none px-2 py-1.5 text-sm shadow-none focus-visible:bg-card focus-visible:ring-1"
+      />
+      {error && <p className="px-2 text-[11px] text-destructive">{error}</p>}
+    </form>
+  )
 }
 
 export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
@@ -91,17 +144,7 @@ export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
             ))}
           </div>
 
-          <form
-            action={quickAddTask.bind(null, slug)}
-            className="mt-2"
-          >
-            <input type="hidden" name="status" value={status} />
-            <Input
-              name="title"
-              placeholder="+ Add"
-              className="border-none px-2 py-1.5 text-sm shadow-none focus-visible:bg-card focus-visible:ring-1"
-            />
-          </form>
+          <QuickAdd slug={slug} status={status} />
         </Card>
       ))}
     </div>

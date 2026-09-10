@@ -1,6 +1,7 @@
 import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwrite'
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
+import { generateKey, hashKey } from './keys.mjs'
 import { STATUSES, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
 
 // NOTE: written against node-appwrite's `Databases` API. If the installed SDK
@@ -284,4 +285,64 @@ export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<M
 // deleteTask/deleteProject above, added for the same reason.
 export async function deleteLog(id: string): Promise<void> {
   await db().deleteDocument(DB, 'worklog', id)
+}
+
+// --- API keys ---------------------------------------------------------------
+// The second front door (lib/auth.ts's resolveCaller). A key grants FULL
+// access to every project — same as any signed-in user, no per-project scope
+// — because there is no ownership/permissions model anywhere else in this
+// app either. Do not add one here just for keys.
+
+export type ApiKey = {
+  id: string; label: string; lastUsedAt: string | null; createdBy: string; createdAt: string
+}
+
+const toKey = (d: Models.DefaultDocument): ApiKey => ({
+  id: d.$id,
+  label: d.label as string,
+  lastUsedAt: (d.lastUsedAt as string) ?? null,
+  createdBy: d.createdBy as string,
+  createdAt: d.$createdAt,
+})
+
+export async function listKeys(): Promise<ApiKey[]> {
+  return listDocs('api_keys', [Query.orderDesc('$createdAt'), Query.limit(DEFAULT_LIST_LIMIT)], toKey)
+}
+
+/**
+ * The plaintext key is minted here and returned exactly once — the caller
+ * (the mint form) shows it to the user and then lets it go out of scope.
+ * Only hashKey(key) is ever sent to Appwrite; the plaintext itself is never
+ * written to any document, log, or file other than the caller's own
+ * one-time render / the seed script's .env.local write.
+ */
+export async function createKey(label: string, createdBy: string): Promise<{ key: string; record: ApiKey }> {
+  const key = generateKey()
+  const record = await insertDoc('api_keys', { label: label.slice(0, 64), hash: hashKey(key), createdBy }, toKey)
+  return { key, record }
+}
+
+export async function revokeKey(id: string): Promise<void> {
+  await db().deleteDocument(DB, 'api_keys', id)
+}
+
+export async function findKeyByHash(hash: string): Promise<ApiKey | null> {
+  return firstDoc('api_keys', [Query.equal('hash', hash), Query.limit(1)], toKey)
+}
+
+/**
+ * Called on every authenticated API request (see resolveCaller), so this is
+ * one extra write per request — write amplification proportional to API
+ * traffic. Acceptable for a small personal/team tracker; the try/catch
+ * ensures a bookkeeping failure here can never break a request that already
+ * authenticated. Ceiling/upgrade path if traffic ever makes this a real
+ * cost: throttle to once per N minutes per key (e.g. skip the write if
+ * lastUsedAt is already within the window) instead of writing unconditionally.
+ */
+export async function touchKey(id: string): Promise<void> {
+  try {
+    await db().updateDocument(DB, 'api_keys', id, { lastUsedAt: new Date().toISOString() })
+  } catch {
+    // Recording last-use must never fail a request that already authenticated.
+  }
 }

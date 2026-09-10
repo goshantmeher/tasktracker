@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers'
 import { Account } from 'node-appwrite'
 import { adminClient, sessionClient } from './appwrite'
+import { hashKey } from './keys.mjs'
+import { findKeyByHash, touchKey } from './db'
 import { SESSION_COOKIE } from './shared'
 
 export { SESSION_COOKIE }
@@ -51,4 +53,39 @@ export async function destroySession(secret: string): Promise<void> {
   } catch {
     // Already invalid/expired on Appwrite's side — nothing more to do.
   }
+}
+
+/**
+ * Turns either front door into one identity: an `X-API-Key` header, or the
+ * browser's session cookie (checked via currentUser()). The key wins when
+ * both are present — checked first, and returns immediately on either
+ * success or failure, so a browser-originated call carrying a key is always
+ * treated as that key and the session is never consulted. Returns null when
+ * neither authenticates.
+ *
+ * CSRF note: because this also accepts the plain session cookie, every REST
+ * route under /api is reachable the same way a same-origin page's fetch is —
+ * there are no CSRF tokens anywhere in this app. What actually prevents a
+ * malicious third-party page from riding a logged-in user's cookie to POST
+ * /PATCH/DELETE here is SESSION_COOKIE being issued with `sameSite: 'lax'`
+ * (app/login/actions.ts) — lax withholds the cookie on cross-site
+ * POST/PATCH/DELETE and on cross-origin fetch. That flag is the entire
+ * defence and it lives in a different file: loosening it to 'none' silently
+ * reopens CSRF on every route in this file without anything here warning
+ * about it. If that ever needs to change, real CSRF tokens become mandatory
+ * in the same change.
+ */
+export async function resolveCaller(req: Request): Promise<Caller | null> {
+  const presented = req.headers.get('x-api-key')
+  if (presented) {
+    const record = await findKeyByHash(hashKey(presented))
+    if (!record) return null
+    // A key grants full access to every project (see lib/db.ts's API keys
+    // section) — deliberately unscoped, matching the app's existing
+    // no-ownership model.
+    await touchKey(record.id)
+    return { kind: 'key', name: record.label }
+  }
+  const user = await currentUser()
+  return user ? { kind: 'user', name: user.name } : null
 }

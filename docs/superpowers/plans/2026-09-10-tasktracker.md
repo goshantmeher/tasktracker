@@ -6,7 +6,7 @@
 
 **Architecture:** SSR-first. Appwrite is reached only from the Next.js server via `node-appwrite`; nothing Appwrite-related ships to the browser. Humans authenticate with an Appwrite session secret held in an httpOnly cookie; Claude authenticates with an `X-API-Key` header. Both front doors funnel into one data-access layer (`lib/db.ts`) so the UI and the API cannot drift.
 
-**Tech Stack:** Next.js 15+ (App Router, TypeScript, Tailwind), `node-appwrite`, `react-markdown` + `remark-gfm`, native HTML5 drag-and-drop, Node's built-in `node:test` runner.
+**Tech Stack:** Next.js 15+ (App Router, TypeScript, Tailwind), **shadcn/ui**, `node-appwrite`, `react-markdown` + `remark-gfm`, native HTML5 drag-and-drop, Node's built-in `node:test` runner.
 
 **Spec:** `docs/superpowers/specs/2026-09-10-tasktracker-design.md`
 
@@ -20,7 +20,40 @@
 - `react-markdown` is used **without** `rehype-raw`. Adding raw-HTML support requires adding sanitisation in the same change.
 - Next.js 15+ conventions: `cookies()` is awaited, and route/page `params` is a Promise that must be awaited.
 - Node.js 22 or later.
+- **All UI is built from shadcn/ui primitives.** Raw `<button>`, `<input>`,
+  `<textarea>`, `<select>` and hand-rolled Tailwind boxes are not acceptable
+  where a shadcn component exists. The JSX shown in Tasks 3, 5, 6 and 8 is the
+  **structural reference** — the elements, props, handlers, `action=` bindings
+  and server-action wiring are all correct and must be preserved — but the
+  presentation elements are to be swapped for their shadcn equivalents per the
+  mapping below.
 - Commit after every task.
+
+### shadcn component mapping
+
+Apply this substitution wherever the task JSX uses the raw element:
+
+| Raw element in the task JSX | shadcn replacement |
+|---|---|
+| `<button>` | `<Button>` (`variant="ghost"` / `"outline"` / `"destructive"` as the context suggests, `size="sm"` in dense rows) |
+| `<input type="text\|email\|password">` | `<Input>` |
+| `<textarea>` | `<Textarea>` |
+| `<select>` | `<Select>` + `SelectTrigger` / `SelectValue` / `SelectContent` / `SelectItem` |
+| a bordered white box (task card, key row, amber key panel) | `<Card>` / `<CardContent>` |
+| a label pill (task labels, type) | `<Badge variant="secondary">` |
+| a field caption | `<Label>` |
+| a horizontal rule between sections | `<Separator>` |
+
+Components to install: `button input textarea select card badge label separator`.
+
+**One trap that will bite silently.** Several forms in this plan submit with a
+server action and read values out of `FormData` by `name` — the scalar-fields
+form in Task 6 above all. shadcn's `Select` is a Radix component, not a native
+`<select>`, so a `name` prop on `SelectTrigger` submits nothing. Pass `name` to
+the **`<Select>` root**, which renders a hidden native input, and then prove it
+works: submit the form, and assert the changed value actually persisted. If the
+value does not arrive, keep a hidden `<input type="hidden">` synced to the
+Select's state. Do not assume it submitted because the UI looked right.
 
 ### Two deviations from the spec, and why
 
@@ -631,6 +664,8 @@ export async function toggleArchived(formData: FormData) {
 
 - [ ] **Step 3: Write the project list page**
 
+Use shadcn `Button`, `Input`, and `Card` per the mapping in Global Constraints. The structure, server-action bindings and `archived` sorting below are the requirement; the raw elements are not.
+
 Overwrite `app/page.tsx`:
 
 ```tsx
@@ -1040,6 +1075,8 @@ export function RefreshOnFocus({ intervalMs = 10_000 }: { intervalMs?: number })
 
 - [ ] **Step 3: Write the board client component**
 
+Columns and cards use shadcn `Card`; the label pills use `Badge`; the "+ Add" field uses `Input`. Keep the drag handlers, `useOptimistic` wiring and `orderBetween` call exactly as written — those are the logic, not the presentation.
+
 Create `app/p/[slug]/board.tsx`. Native HTML5 drag-and-drop — no library.
 
 ```tsx
@@ -1364,6 +1401,8 @@ export function MarkdownField({
 
 - [ ] **Step 4: Write the task detail page**
 
+The scalar form uses shadcn `Select` (three of them), `Input` and `Button`. **Read the Select/FormData trap in Global Constraints before writing this form** — it is the one place in the plan where a shadcn swap can break a server action silently. Step 5 verifies it.
+
 Create `app/p/[slug]/t/[id]/page.tsx`:
 
 ```tsx
@@ -1434,7 +1473,7 @@ npm run dev
 4. Reload → the content persisted.
 5. Type `<script>alert(1)</script>` into Notes, click away → it renders as **literal text**, no dialog. This is the `rehype-raw` guarantee; if a dialog appears, the component is misconfigured and must be fixed before any API route can write these fields.
 6. Fill in Notes on the task, go back to the board → the card shows the `⚑` marker.
-7. Change status in the scalar form and Save → the card moves column on the board.
+7. Change status in the scalar form and Save → the card moves column on the board. **This is the shadcn `Select` FormData check** — if the status does not change, the Select is not submitting its value and needs `name` on the `<Select>` root or a synced hidden input.
 8. Edit only Result, reload → Description and Requirement are unchanged.
 
 - [ ] **Step 6: Commit**
@@ -1710,6 +1749,8 @@ export async function removeKey(formData: FormData) {
 ```
 
 - [ ] **Step 4: Write the key settings page**
+
+Use shadcn `Button`, `Input`, `Card` and `Badge`. The one-time key panel is a `Card` with a warning treatment; the key itself stays in a `<code>` block so it is selectable and monospaced.
 
 Create `app/settings/keys/page.tsx`. The create form is a client component so the one-time key can be shown in the response.
 

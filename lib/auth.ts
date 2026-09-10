@@ -88,12 +88,12 @@ export async function destroySession(secret: string): Promise<void> {
  * there are no CSRF tokens anywhere in this app. What actually prevents a
  * malicious third-party page from riding a logged-in user's cookie to POST
  * /PATCH/DELETE here is SESSION_COOKIE being issued with `sameSite: 'lax'`
- * (app/login/actions.ts) — lax withholds the cookie on cross-site
- * POST/PATCH/DELETE and on cross-origin fetch. That flag is the entire
- * defence and it lives in a different file: loosening it to 'none' silently
- * reopens CSRF on every route in this file without anything here warning
- * about it. If that ever needs to change, real CSRF tokens become mandatory
- * in the same change.
+ * — lax withholds the cookie on cross-site POST/PATCH/DELETE and on
+ * cross-origin fetch. That flag is the entire defence. It is set in exactly
+ * one place, setSessionCookie() above, which both login front doors go
+ * through; loosening it to 'none' there silently reopens CSRF on every route
+ * that calls this function. If that ever needs to change, real CSRF tokens
+ * become mandatory in the same change.
  */
 export async function resolveCaller(req: Request): Promise<Caller | null> {
   const presented = req.headers.get('x-api-key')

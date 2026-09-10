@@ -131,6 +131,61 @@ image is safe to rebuild anywhere.
 > HTTP router and every HTTPS request falls through to the catch-all — which
 > has no backend. Cost us an afternoon.
 
+### If pages feel slow, check where `APPWRITE_ENDPOINT` actually resolves
+
+Worth measuring before optimising anything else. If the app and Appwrite sit
+on the same host but `APPWRITE_ENDPOINT` is a public hostname behind a CDN,
+every server-side query leaves the machine, crosses to the CDN's nearest edge
+and comes back — a call that should cost ~1ms costs a couple of hundred, and
+a page render makes several.
+
+The tell is that response time barely changes with payload size. A route
+returning a few hundred bytes taking about as long as a full page render means
+you are paying fixed per-call overhead, not transfer. Confirm it from inside
+the container:
+
+```bash
+docker exec <app-container> node -e \
+  'require("dns").lookup(new URL(process.env.APPWRITE_ENDPOINT).hostname,
+   {all:true},(e,a)=>console.log(a))'
+```
+
+CDN addresses in that output mean every query is making a round trip to the
+edge and back.
+
+The fix is a Docker network alias, so the *same* hostname resolves to the
+Appwrite container inside Docker while public DNS stays on the CDN for
+everyone else. Put both on one network and give Appwrite an alias matching
+the hostname the app already uses:
+
+```yaml
+services:
+  appwrite:
+    networks:
+      <shared-network>:
+        aliases:
+          - <your-appwrite-hostname>
+```
+
+Then set `APPWRITE_ENDPOINT=http://<your-appwrite-hostname>/v1` — `http`,
+because the container serves plain HTTP; TLS was the CDN's job and there is
+no longer a CDN in this path.
+
+Two things make this the right shape rather than the obvious alternatives:
+
+- **Keep the hostname.** Appwrite 1.9 refuses any request whose `Host` is not
+  a domain it knows (`_APP_DOMAIN`, `_APP_CONSOLE_DOMAIN`, `_APP_MIGRATION_HOST`)
+  with `general_access_forbidden`. Pointing the app at the raw container name
+  trips this; an alias matching the real hostname does not.
+- **It degrades instead of breaking.** If the alias is ever lost — it lives in
+  Appwrite's compose, so redeploying Appwrite without it drops it — DNS falls
+  back to the public record and the app keeps working, just slowly. Pointing
+  at a container name instead fails hard with a DNS error.
+
+Also check for accidental waterfalls in the pages themselves: several awaits
+in a row that share no data dependency each cost a full round trip. Every page
+here fetches with `Promise.all` for that reason.
+
 ## Giving an agent access
 
 Mint a key at `/settings/keys`. The plaintext is shown **once**; only its

@@ -179,3 +179,15 @@
 .tt-card { box-shadow: 0 1px 1px rgba(9, 30, 66, 0.25), 0 0 1px rgba(9, 30, 66, 0.31); }
 .tt-card:hover { background: #f7f8f9; }
 .tt-card-dragging { transform: rotate(2deg); box-shadow: 0 8px 16px rgba(9, 30, 66, 0.25); }
+
+/* Navigation progress line, under the top bar. Eases toward 92% and stops
+   there — nothing on the client knows the server's real progress, so the bar
+   only reaches the end when the new page actually renders and NavProgress
+   swaps it for the finishing state. */
+@keyframes tt-nav-progress {
+  0%   { transform: scaleX(0); }
+  30%  { transform: scaleX(0.45); }
+  70%  { transform: scaleX(0.78); }
+  100% { transform: scaleX(0.92); }
+}
+.tt-nav-progress { animation: tt-nav-progress 6s cubic-bezier(0.1, 0.7, 0.2, 1) forwards; }

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { logout } from '@/app/login/actions'
 import { Avatar } from './issue'
+import { NavProgress } from './nav-progress'
 
 /**
  * App chrome: a slim top bar across the full width, and a left project
@@ -25,7 +26,8 @@ export function AppShell({
     // pinned to its foot) instead of the whole page growing past the fold.
     <div className="flex h-screen flex-col overflow-hidden bg-white text-tt-text">
       {/* Top navigation */}
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-tt-border px-4">
+      <header className="relative flex h-14 shrink-0 items-center gap-3 border-b border-tt-border px-4">
+        <NavProgress />
         <Link href="/" className="flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded-[3px] bg-tt-blue text-xs font-bold text-white">
             T

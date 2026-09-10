@@ -216,4 +216,42 @@ check('defaults and explicit values both applied',
   check('context includes the task id for follow-up writes', r.body.includes(id))
 }
 
+// --- both front doors agree ---------------------------------------------
+if (process.env.TEST_EMAIL && process.env.TEST_PASSWORD) {
+  // Log in the way a browser does and keep the Set-Cookie.
+  const form = new URLSearchParams({
+    email: process.env.TEST_EMAIL, password: process.env.TEST_PASSWORD,
+  })
+  const login = await fetch(BASE + '/api/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: form,
+  })
+  const cookie = login.headers.get('set-cookie')?.split(';')[0]
+  check('cookie login succeeded', login.status === 200 && cookie?.startsWith('tt_session='))
+
+  const viaCookie = await fetch(`${BASE}/api/tasks?project=${project.slug}`, {
+    headers: { cookie },
+  })
+  const cookieBody = await viaCookie.json()
+  const viaKey = await api(`/api/tasks?project=${project.slug}`)
+
+  check('cookie caller is accepted by /api', viaCookie.status === 200)
+  check('cookie and key see identical task lists',
+    JSON.stringify(cookieBody.tasks.map(t => t.id).sort()) ===
+    JSON.stringify(viaKey.body.tasks.map(t => t.id).sort()))
+
+  // And a write through the cookie is visible through the key.
+  const w = await fetch(`${BASE}/api/tasks/${id}`, {
+    method: 'PATCH',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ assignee: 'cookie-writer' }),
+  })
+  check('cookie caller can write', w.status === 200)
+  const readBack = await api(`/api/tasks/${id}`)
+  check('a cookie write is visible to a key read', readBack.body.assignee === 'cookie-writer')
+} else {
+  console.log('  – skipped cross-door checks (set TEST_EMAIL and TEST_PASSWORD)')
+}
+
 console.log('\nall contract checks passed')

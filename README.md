@@ -58,15 +58,78 @@ HTML in a task body is inert text, and nothing in this app ever calls
 
 ---
 
-## Setup
+## Install
 
-1. Create an Appwrite project and an API key with `databases.*`,
-   `collections.*`, `attributes.*`, `indexes.*`, `documents.*` and
-   `users.read` scopes.
-2. Fill in `.env.local` (see the file for the four required variables).
-3. `npm install && npm run setup` — creates the database schema. Idempotent.
-4. Create users in the Appwrite console under Auth. There is no signup page.
-5. `npm run dev`
+**You need:** Node 20 or newer, and an Appwrite server — self-hosted or
+[Appwrite Cloud](https://cloud.appwrite.io). Developed against Appwrite 1.9.0.
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/goshantmeher/tasktracker.git
+cd tasktracker
+npm install
+```
+
+### 2. Set up Appwrite
+
+In the Appwrite console:
+
+1. **Create a project.** Copy its ID from *Settings → Project ID*.
+2. **Create a database.** *Databases → Create database*. Copy its **ID**, not
+   its name. `npm run setup` creates the collections *inside* this database
+   but does not create the database itself — this is the step people miss.
+3. **Create an API key.** *Overview → Integrations → API keys → Create*, with
+   scopes `databases.*`, `collections.*`, `attributes.*`, `indexes.*`,
+   `documents.*` and `users.read`. Copy it now; Appwrite shows it once.
+4. **Create your user.** *Auth → Create user*, with an email and password.
+   There is no signup page in this app, by design.
+
+### 3. Configure
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in the four `APPWRITE_*` values from the step above. `.env.local` is
+gitignored and must stay that way — every value in it is server-side only, and
+there is deliberately no `NEXT_PUBLIC_APPWRITE_*` variable anywhere, so no
+Appwrite credential ever reaches the browser.
+
+### 4. Create the schema
+
+```bash
+npm run setup
+```
+
+Creates four collections — `projects`, `tasks`, `worklog`, `api_keys` — with
+their attributes and indexes. Idempotent: it prints `exists` for anything
+already there, so it is safe to re-run after an interrupted setup or an
+Appwrite upgrade.
+
+### 5. Run it
+
+```bash
+npm run dev
+```
+
+Open <http://localhost:3000>, log in with the user you created, and make your
+first project. Then mint a key at `/settings/keys` to
+[connect an agent](#giving-an-agent-access).
+
+### Deploying
+
+It is a stock Next.js app — anything that runs `next build` works. This one
+runs on [Coolify](https://coolify.io) pointed at the GitHub repo, which
+redeploys on push to `main`. Set the same four `APPWRITE_*` variables in the
+host's environment settings; there is no build-time secret, so a container
+image is safe to rebuild anywhere.
+
+> **If your deployment returns `503 no available server`:** check that the
+> domain is stored with an `https://` scheme, not `http://`. Coolify generates
+> its Traefik router from that scheme, so an `http://` FQDN produces only an
+> HTTP router and every HTTPS request falls through to the catch-all — which
+> has no backend. Cost us an afternoon.
 
 ## Giving an agent access
 

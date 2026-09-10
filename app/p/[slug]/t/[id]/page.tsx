@@ -4,6 +4,7 @@ import { currentUser } from '@/lib/auth'
 import { getTask, getProjectBySlug, STATUSES, TYPES, PRIORITIES } from '@/lib/db'
 import { saveScalars } from '../../actions'
 import { MarkdownField } from './detail'
+import { RefreshOnFocus } from '@/components/refresh-on-focus'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -58,6 +59,7 @@ export default async function TaskPage(
 
   return (
     <main className="mx-auto max-w-3xl p-6">
+      <RefreshOnFocus />
       <Link href={`/p/${slug}`} className="text-sm text-muted-foreground underline">← Board</Link>
       <h1 className="mb-6 mt-3 text-2xl font-semibold">{task.title}</h1>
 

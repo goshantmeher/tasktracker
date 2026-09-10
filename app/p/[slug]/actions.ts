@@ -63,7 +63,8 @@ async function ownedTask(slug: string, taskId: string) {
   const project = await getProjectBySlug(slug)
   if (!project) throw new Error('no such project')
   const task = await getTask(taskId)
-  if (!task || task.projectId !== project.id) throw new Error('task does not belong to that project')
+  if (!task) throw new Error('no such task')
+  if (task.projectId !== project.id) throw new Error('task does not belong to that project')
   return task
 }
 

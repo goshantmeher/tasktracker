@@ -4,8 +4,10 @@ import { orderBetween } from './order.mjs'
 import { generateKey, hashKey } from './keys.mjs'
 import { STATUSES, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
 
-// NOTE: written against node-appwrite's `Databases` API. If the installed SDK
-// exposes `TablesDB` instead, see Task 1 Step 2 for the name translation.
+// NOTE: written against node-appwrite's `Databases` API (createDocument/
+// listDocuments/etc, documents/$id) — see scripts/setup-appwrite.mjs's own
+// note on the same surface choice. If the installed SDK exposes `TablesDB`
+// instead, every call in this file needs the equivalent rename.
 const db = () => new Databases(serverClient())
 
 // Query.limit(100) used to be the default here, which silently truncated any
@@ -170,7 +172,7 @@ export async function getTask(id: string): Promise<Task | null> {
 }
 
 /** One past the last card in a column, so new tasks land at the bottom. */
-export async function bottomOrder(projectId: string, status: Status): Promise<number> {
+async function bottomOrder(projectId: string, status: Status): Promise<number> {
   const res = await db().listDocuments(DB, 'tasks', [
     Query.equal('projectId', projectId),
     Query.equal('status', status),
@@ -215,8 +217,10 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
   return patchDoc('tasks', id, body, toTask)
 }
 
-// Not in the original task interface list; needed by the REST API (Task 9)
-// and by the partial-update probe's cleanup.
+// PROBE-ONLY, exactly like deleteLog/deleteProject elsewhere in this file:
+// there is no DELETE route for tasks anywhere in app/api, and none is
+// planned — this exists solely so probe scripts that write real documents
+// against live Appwrite can remove what they created.
 export async function deleteTask(id: string): Promise<void> {
   await db().deleteDocument(DB, 'tasks', id)
 }
@@ -253,9 +257,8 @@ export async function addLog(taskId: string, author: string, body: string): Prom
  * of the window entirely, indistinguishable from those tasks having no
  * history. A probe with deliberately unequal volume (1 chatty task with
  * 120 entries vs. 3 quiet tasks with 1 each) confirmed exactly that
- * failure — see task-7-report.md. Per-task queries are correct by
- * construction instead: each task's own quota can never be crowded out
- * by another task's volume.
+ * failure. Per-task queries are correct by construction instead: each
+ * task's own quota can never be crowded out by another task's volume.
  *
  * Cost scales with taskIds.length (one indexed query per task, run
  * concurrently) — fine for a realistic context set (tens of open tasks),
@@ -276,13 +279,12 @@ export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<M
 }
 
 // PROBE-ONLY. Not part of the product API — listLog/addLog are
-// deliberately append-only with no update or delete exposed to any
-// server action or UI, and the REST API (Task 9) must not expose a
-// delete route for worklog either; the append-only guarantee is a
-// product property, not just this file's. This exists solely so probe
-// scripts, which write real documents against live Appwrite, can remove
-// what they created; nothing in app/ calls it. Mirrors
-// deleteTask/deleteProject above, added for the same reason.
+// deliberately append-only with no update or delete exposed to any server
+// action, UI, or REST route, and no delete route for worklog is planned;
+// the append-only guarantee is a product property, not just this file's.
+// This exists solely so probe scripts, which write real documents against
+// live Appwrite, can remove what they created; nothing in app/ calls it.
+// Mirrors deleteTask/deleteProject above, added for the same reason.
 export async function deleteLog(id: string): Promise<void> {
   await db().deleteDocument(DB, 'worklog', id)
 }

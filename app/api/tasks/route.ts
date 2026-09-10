@@ -23,11 +23,11 @@ export async function GET(req: Request) {
   if (type?.some(t => !(TYPES as readonly string[]).includes(t)))
     return bad(`type must be one of: ${TYPES.join(', ')}`)
 
-  // Ruling 50: pass `limit` through when the caller gave one, otherwise omit
-  // it entirely so lib/db.ts's DEFAULT_LIST_LIMIT (5000) applies. A
-  // hardcoded `Number(...) || 100` here is the exact silent-truncation bug
-  // already fixed once in listTasks — an agent reading a large board must
-  // not get a silently short list back.
+  // Pass `limit` through when the caller gave one, otherwise omit it
+  // entirely so lib/db.ts's DEFAULT_LIST_LIMIT (5000) applies. A hardcoded
+  // `Number(...) || 100` here is the exact silent-truncation bug already
+  // fixed once in listTasks — an agent reading a large board must not get a
+  // silently short list back.
   const limitParam = url.searchParams.get('limit')
   let limit: number | undefined
   if (limitParam !== null) {

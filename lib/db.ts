@@ -1,7 +1,7 @@
 import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwrite'
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
-import { STATUSES, type Status, type Task, type TaskInput, type Project } from './shared'
+import { STATUSES, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
 
 // NOTE: written against node-appwrite's `Databases` API. If the installed SDK
 // exposes `TablesDB` instead, see Task 1 Step 2 for the name translation.
@@ -218,4 +218,85 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
 // and by the partial-update probe's cleanup.
 export async function deleteTask(id: string): Promise<void> {
   await db().deleteDocument(DB, 'tasks', id)
+}
+
+const toLog = (d: Models.DefaultDocument): LogEntry => ({
+  id: d.$id,
+  taskId: d.taskId as string,
+  author: d.author as string,
+  body: d.body as string,
+  createdAt: d.$createdAt,
+})
+
+/** Oldest first — the stream reads top to bottom as it happened. */
+export async function listLog(taskId: string, limit = 50): Promise<LogEntry[]> {
+  return listDocs('worklog', [
+    Query.equal('taskId', taskId),
+    Query.orderAsc('$createdAt'),
+    Query.limit(limit),
+  ], toLog)
+}
+
+/** Append-only. There is deliberately no update or delete in the product API. */
+export async function addLog(taskId: string, author: string, body: string): Promise<LogEntry> {
+  return insertDoc('worklog', { taskId, author: author.slice(0, 64), body }, toLog)
+}
+
+// Extra headroom recentLogByTask adds on top of the exact per-task quota
+// (taskIds.length * perTask) for its single batched query.
+//
+// The failure mode this is patching around: Query.orderDesc('$createdAt')
+// orders the WHOLE result set globally across every requested taskId, not
+// per task, so `limit` caps the combined window, not each task's own
+// share of it. A single chatty task's rows all sort ahead of a quiet
+// task's one old entry, so if that chatty task's recent volume exceeds
+// this headroom, the quiet task's row never enters the window at all —
+// it silently comes back with zero entries, indistinguishable from a task
+// that genuinely has no history. /api/context (Task 10) is the consumer,
+// so that's a correctness bug for whoever reads it (an agent), not a perf
+// nit.
+//
+// No finite constant fixes this in general — only bounds how unbalanced a
+// board can be before it resurfaces. The real fix, if a board's usage
+// turns out this skewed, is N per-task queries (taskIds.length round
+// trips) instead of one batched query, so each task's quota is reserved
+// and can't be crowded out by another task's volume. That trade isn't
+// made here — see recentLogByTask's own doc comment for why a single
+// query is preferred for a board-sized taskIds list.
+const WORKLOG_WINDOW_HEADROOM = 100
+
+/**
+ * Most recent entries for many tasks at once, for /api/context.
+ *
+ * One batched query, not N per-task queries — deliberate, so a 40-task
+ * board's context fetch costs 1 round trip instead of 40. See
+ * WORKLOG_WINDOW_HEADROOM above for the correctness trade that buys and
+ * its upgrade path.
+ */
+export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<Map<string, LogEntry[]>> {
+  if (taskIds.length === 0) return new Map()
+  const res = await db().listDocuments(DB, 'worklog', [
+    Query.equal('taskId', taskIds),
+    Query.orderDesc('$createdAt'),
+    Query.limit(taskIds.length * perTask + WORKLOG_WINDOW_HEADROOM),
+  ])
+  const map = new Map<string, LogEntry[]>()
+  for (const doc of res.documents) {
+    const e = toLog(doc)
+    const list = map.get(e.taskId) ?? []
+    if (list.length < perTask) { list.push(e); map.set(e.taskId, list) }
+  }
+  // Each task's entries came in newest-first; flip to chronological.
+  for (const list of map.values()) list.reverse()
+  return map
+}
+
+// Not part of the product API — listLog/addLog are deliberately
+// append-only with no update or delete exposed to any server action or
+// UI. This exists solely so probe scripts, which write real documents
+// against live Appwrite, can remove what they created; nothing in app/
+// calls it. Mirrors deleteTask/deleteProject above, added for the same
+// reason.
+export async function deleteLog(id: string): Promise<void> {
+  await db().deleteDocument(DB, 'worklog', id)
 }

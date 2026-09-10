@@ -4,10 +4,10 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
 import {
-  createTask, updateTask, getProjectBySlug, getTask,
+  createTask, updateTask, getProjectBySlug, getTask, addLog,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Status, type TaskInput,
 } from '@/lib/db'
-import { isAllowed } from '@/lib/shared'
+import { isAllowed, resolveAuthor } from '@/lib/shared'
 
 async function requireUser() {
   if (!(await currentUser())) redirect('/login')
@@ -97,4 +97,20 @@ export async function saveScalars(slug: string, taskId: string, formData: FormDa
   })
   revalidatePath(`/p/${slug}/t/${taskId}`)
   revalidatePath(`/p/${slug}`)
+}
+
+/**
+ * Note `requireUser()` is not reused here — the action needs the caller's
+ * name (for the entry's author), not just proof that they're logged in.
+ */
+export async function addLogEntry(slug: string, taskId: string, formData: FormData) {
+  const user = await currentUser()
+  if (!user) redirect('/login')
+  // Same cross-project decoupling moveTask/saveField/saveScalars guard
+  // against: taskId and slug arrive independently from the client.
+  await ownedTask(slug, taskId)
+  const body = String(formData.get('body') ?? '').trim()
+  if (!body) return
+  await addLog(taskId, resolveAuthor(user.name, user.email), body)
+  revalidatePath(`/p/${slug}/t/${taskId}`)
 }

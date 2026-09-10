@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
-import { getTask, getProjectBySlug, STATUSES, TYPES, PRIORITIES } from '@/lib/db'
-import { saveScalars } from '../../actions'
+import { getTask, listLog, getProjectBySlug, STATUSES, TYPES, PRIORITIES } from '@/lib/db'
+import { saveScalars, addLogEntry } from '../../actions'
 import { MarkdownField } from './detail'
+import { Markdown } from '@/components/markdown'
 import { RefreshOnFocus } from '@/components/refresh-on-focus'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -56,6 +57,7 @@ export default async function TaskPage(
   if (!project) notFound()
   const task = await getTask(id)
   if (!task || task.projectId !== project.id) notFound()
+  const log = await listLog(task.id)
 
   return (
     <main className="mx-auto max-w-3xl p-6">
@@ -78,6 +80,30 @@ export default async function TaskPage(
         <MarkdownField key={field} slug={slug} taskId={task.id}
           field={field} label={label} value={task[field as keyof typeof task] as string} />
       ))}
+
+      <section className="mt-10 border-t pt-6">
+        <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Work log
+        </h3>
+
+        <ol className="mb-4 space-y-4">
+          {log.map(e => (
+            <li key={e.id}>
+              <div className="text-[11px] text-gray-400">
+                {e.author} · {new Date(e.createdAt).toLocaleString()}
+              </div>
+              <Markdown>{e.body}</Markdown>
+            </li>
+          ))}
+          {log.length === 0 && <li className="text-sm text-gray-400">No entries yet.</li>}
+        </ol>
+
+        <form action={addLogEntry.bind(null, slug, task.id)} className="space-y-2">
+          <textarea name="body" rows={3} placeholder="What happened?"
+            className="w-full rounded border p-2 text-sm" />
+          <button className="rounded bg-black px-3 py-1 text-sm text-white">Add entry</button>
+        </form>
+      </section>
     </main>
   )
 }

@@ -48,3 +48,17 @@ export type LogEntry = {
 export function isAllowed<T extends readonly string[]>(v: string, allowed: T): v is T[number] {
   return (allowed as readonly string[]).includes(v)
 }
+
+/**
+ * The work log's author must never render blank: once written an entry can
+ * never be edited (addLog is deliberately append-only), so a blank author
+ * is uncorrectable. `name` is expected to already be currentUser()'s own
+ * name-or-email (lib/auth.ts), so the email fallback here only matters if
+ * that too was empty; 'Unknown' is the last-resort floor for an Appwrite
+ * user record with neither. Kept here (not inline in the 'use server'
+ * action) for the same reason as `isAllowed`: it's the only way to unit-test
+ * it directly.
+ */
+export function resolveAuthor(name: string, email: string): string {
+  return name || email || 'Unknown'
+}

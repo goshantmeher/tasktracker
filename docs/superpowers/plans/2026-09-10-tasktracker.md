@@ -242,7 +242,7 @@ git commit -m "feat: scaffold Next.js app and Appwrite schema setup script"
 **Interfaces:**
 - Consumes: the schema from Task 1.
 - Produces:
-  - `lib/appwrite.ts`: `serverClient(): Client`, `sessionClient(secret: string): Client`, `anonClient(): Client`, `DB: string`
+  - `lib/appwrite.ts`: `serverClient(): Client`, `sessionClient(secret: string): Client`, `adminClient(): Client`, `DB: string`
   - `lib/keys.mjs`: `generateKey(): string`, `hashKey(key: string): string`
   - `lib/shared.ts`: `SESSION_COOKIE`, `STATUSES`, `TYPES`, `PRIORITIES`, `MD_FIELDS`, and the `Project` / `Task` / `LogEntry` / `Status` types
   - `lib/auth.ts`: `Caller = { kind: 'user' | 'key'; name: string }`, `currentUser(): Promise<{name: string, email: string} | null>`
@@ -381,9 +381,19 @@ export function sessionClient(secret: string) {
   return base().setSession(secret)
 }
 
-/** No credentials. Only for creating a session at login. */
-export function anonClient() {
-  return base()
+/**
+ * Admin client: project + API key, but no session. This is what creates a
+ * session at login.
+ *
+ * It MUST carry the API key. Appwrite only returns `session.secret` to a
+ * caller holding a server key — a keyless client gets a valid session object
+ * whose `secret` is the empty string. That failure is silent: the cookie gets
+ * set to "", every later `.setSession("")` is unauthenticated, and the app
+ * behaves as though login simply never works. Verified against this project's
+ * own Appwrite 1.9.0: keyless -> secret length 0, with key -> length 396.
+ */
+export function adminClient() {
+  return base().setKey(process.env.APPWRITE_API_KEY!)
 }
 ```
 
@@ -424,7 +434,7 @@ Create `app/login/actions.ts`:
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { Account } from 'node-appwrite'
-import { anonClient, sessionClient } from '@/lib/appwrite'
+import { adminClient, sessionClient } from '@/lib/appwrite'
 import { SESSION_COOKIE } from '@/lib/auth'
 
 export async function login(_prev: string | null, formData: FormData) {
@@ -434,10 +444,13 @@ export async function login(_prev: string | null, formData: FormData) {
 
   let secret: string, expire: string
   try {
-    const session = await new Account(anonClient())
+    const session = await new Account(adminClient())
       .createEmailPasswordSession(email, password)
     secret = session.secret
     expire = session.expire
+    // A keyless client returns a session with an empty secret. Fail loudly
+    // rather than storing "" in the cookie and pretending we are logged in.
+    if (!secret) return 'Login succeeded but no session secret was returned.'
   } catch {
     // Deliberately not distinguishing unknown-email from wrong-password.
     return 'Invalid email or password.'
@@ -535,21 +548,47 @@ export default async function Home() {
 }
 ```
 
-- [ ] **Step 11: Verify the login flow by hand**
+- [ ] **Step 11: Verify the auth primitives with a script**
 
-Create a user in the Appwrite console under Auth first, if you have not already.
+A test user already exists; `TEST_EMAIL` and `TEST_PASSWORD` in `.env.local` are live credentials against the self-hosted Appwrite. Write `test/auth-probe.mjs` and run it with `npx tsx test/auth-probe.mjs`:
 
-```bash
-npm run dev
+```js
+import { readFileSync } from 'node:fs'
+import assert from 'node:assert/strict'
+for (const l of readFileSync('.env.local', 'utf8').split('\n')) {
+  const m = l.match(/^([A-Z_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].trim()
+}
+const { Account } = await import('node-appwrite')
+const { adminClient, sessionClient } = await import('../lib/appwrite.ts')
+
+// The whole point: an admin client returns a usable secret.
+const s = await new Account(adminClient())
+  .createEmailPasswordSession(process.env.TEST_EMAIL, process.env.TEST_PASSWORD)
+assert.ok(s.secret && s.secret.length > 100, `expected a session secret, got ${JSON.stringify(s.secret)}`)
+
+// And that secret authenticates as the right user.
+const me = await new Account(sessionClient(s.secret)).get()
+assert.equal(me.email, process.env.TEST_EMAIL)
+
+// A bad password must throw, not return a secretless session.
+await assert.rejects(() => new Account(adminClient())
+  .createEmailPasswordSession(process.env.TEST_EMAIL, 'wrong-password'))
+
+console.log('auth primitives verified: secret length', s.secret.length, 'as', me.email)
 ```
 
-Check all four, in order:
-1. Visit `http://localhost:3000/` → redirected to `/login`.
-2. Submit a wrong password → "Invalid email or password.", still on `/login`.
-3. Submit the correct credentials → redirected to `/`, showing "Signed in as …".
-4. In devtools → Application → Cookies, `tt_session` shows **HttpOnly ✓**. Then run `document.cookie` in the console: `tt_session` must **not** appear. That is the whole point of this task.
+Expected output: `auth primitives verified: secret length <a few hundred> as tasktracker-test@justlocal.tech`
 
-Then click "Sign out" → back to `/login`, and `/` redirects again.
+Then confirm the app compiles and the middleware is wired:
+
+```bash
+npm run build
+curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://localhost:3000/   # after npm run dev
+```
+
+Expected: `307` redirecting to `/login`.
+
+The browser-only checks — `tt_session` showing HttpOnly in devtools, and `document.cookie` not containing it — are covered by a consolidated Playwright pass the controller runs after Task 11. Do not attempt them here.
 
 - [ ] **Step 12: Commit**
 
@@ -2532,7 +2571,7 @@ This is a real route, not test scaffolding: it is the endpoint any non-browser c
 
 ```ts
 import { Account } from 'node-appwrite'
-import { anonClient } from '@/lib/appwrite'
+import { adminClient } from '@/lib/appwrite'
 import { SESSION_COOKIE } from '@/lib/auth'
 import { bad } from '../_util'
 
@@ -2544,9 +2583,10 @@ export async function POST(req: Request) {
 
   let secret: string, expire: string
   try {
-    const s = await new Account(anonClient()).createEmailPasswordSession(email, password)
+    const s = await new Account(adminClient()).createEmailPasswordSession(email, password)
     secret = s.secret
     expire = s.expire
+    if (!secret) return bad('No session secret returned', 500)
   } catch {
     return bad('Invalid email or password', 401)
   }

@@ -97,7 +97,7 @@ duplicated.
 | requirement | string(65535) | optional, markdown — what done looks like |
 | prerequisites | string(65535) | optional, markdown — what must be true first |
 | result | string(65535) | optional, markdown — what actually happened |
-| notes | string(65535) | optional, markdown — standing context |
+| notes | string(65535) | optional, markdown — caveats to keep in mind |
 | type | enum | `bug` \| `feature` \| `chore`, default `feature` |
 | status | enum | `backlog` \| `todo` \| `in_progress` \| `blocked` \| `done`, default `backlog` |
 | priority | enum | `low` \| `medium` \| `high` \| `urgent`, default `medium` |
@@ -116,10 +116,13 @@ the setup fields while omitting results for tasks that are not finished.
 Appwrite stores string attributes of this size off-row, so five per document
 is not a document-size concern.
 
-`notes` and the `worklog` collection overlap by intent and are kept distinct:
-`worklog` is append-only and timestamped (what happened, in order), `notes` is
-a single editable field (context that stays true). If one goes unused in
-practice, drop it rather than maintaining both.
+`notes` and `worklog` serve different purposes and differ in scope. `worklog`
+is history: append-only, timestamped, and only ever read in the context of its
+own task. `notes` is a standing caveat — "when touching this, remember X" —
+that stays relevant while working on *other* tasks, and is therefore
+deliberately surfaced outside the task that owns it: aggregated at the top of
+`/api/context` and flagged on the board card. A note on a `done` task is not
+stale; a finished task's gotcha is exactly what bites weeks later.
 
 Statuses are a fixed set, not per-board configuration. Configurable columns
 mean a columns collection, ordering UI, and a migration path whenever one is
@@ -258,10 +261,16 @@ the created entry with 201.
 ### `GET /api/context?project=<slug>`
 
 Returns `text/markdown`: the whole board rendered for an agent to read in one
-call — open tasks grouped by status, each with its `description`,
-`requirement`, `prerequisites` and `notes` (omitting whichever are empty), and
-the most recent work log entries per task. `result` is included only for tasks
-in `done`, which are otherwise summarised as titles only.
+call, in this order:
+
+1. **Keep in mind** — every non-empty `notes` field in the project, each
+   labelled with its task title, drawn from tasks of *every* status including
+   `done`. This section leads because its whole purpose is to be read while
+   working on something else.
+2. **Open tasks** grouped by status, each with its `description`,
+   `requirement` and `prerequisites`, omitting whichever are empty, plus the
+   most recent work log entries.
+3. **Done** — titles only, each with its `result` if it has one.
 
 This endpoint is the point of the system. One call at the start of a session
 brings Claude current on everything the human added through the UI, and unlike
@@ -277,7 +286,8 @@ Five screens, no more.
   unarchives one; archived projects sort below the rest.
 - **`/p/[slug]`** — the board. Five columns, drag-and-drop between them. Each
   card shows title, type, priority, assignee and labels. A "+" per column
-  creates a task inline.
+  creates a task inline. A card carrying a non-empty `notes` field shows a
+  marker, so caveats are visible without opening anything.
 - **`/p/[slug]/t/[id]`** — task detail. The scalar fields (type, status,
   priority, assignee, labels), then the five markdown sections — description,
   requirement, prerequisites, result, notes — then the work log stream in
@@ -309,7 +319,8 @@ One file, `test-api.mjs`, run against a running dev instance. It exercises the
 full contract in sequence — create a task, list it, move it between columns,
 append a work log entry, `PATCH` only `result` and assert the other four
 markdown fields survived untouched, fetch `/api/context` and assert the task
-appears under the right heading — and asserts each result. It additionally performs
+appears under the right heading and that a note on a `done` task still reaches
+the "Keep in mind" section — and asserts each result. It additionally performs
 one operation via session cookie and the equivalent via API key, asserting
 both land identically, which is the property that keeps the two front doors
 honest.

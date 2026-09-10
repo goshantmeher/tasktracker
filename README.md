@@ -82,7 +82,39 @@ has, with no per-project scoping. That is a deliberate choice, not an
 oversight: authentication *is* the authorization boundary here. Hand keys out
 and revoke them accordingly.
 
-Then, at the start of a session:
+### As an MCP server (recommended)
+
+The tracker speaks MCP over HTTP, so an agent gets the board as *tools*
+rather than a curl cheatsheet. From any repo:
+
+```bash
+claude mcp add --transport http tasktracker \
+  https://<your-host>/api/mcp --header "x-api-key: $TASKTRACKER_KEY"
+```
+
+That's it — no checkout of this repo, no local process. Seven tools:
+
+| Tool | Does |
+|---|---|
+| `get_board` | The whole board as markdown. Start here. |
+| `list_projects` | Every project and its slug |
+| `list_tasks` | One board, filtered by status / type / assignee / label |
+| `get_task` | One task with all five fields and its full log |
+| `create_task` | Add a task to the bottom of a column |
+| `update_task` | Partial update — omitted fields are left alone |
+| `add_log` | Append to the work log |
+
+There is deliberately no `delete_task`: deleting is irreversible, takes the
+work log with it, and is the one operation a human should have to click.
+The REST door still has `DELETE` for scripts that genuinely need it.
+
+The server is stateless — no session is issued, so it runs on however many
+instances the deployment has — and it authenticates with the same
+`x-api-key` every other route takes. MCP gets no door of its own.
+
+### Or over plain HTTP
+
+At the start of a session:
 
 ```bash
 curl -s -H "x-api-key: $TASKTRACKER_KEY" \
@@ -123,6 +155,7 @@ left alone, so writing `result` cannot clobber a `requirement`.
 | POST | `/api/tasks` | Create. `project` and `title` required |
 | GET/PATCH/DELETE | `/api/tasks/<id>` | Read, partially update, or delete (also clears its log) |
 | GET/POST | `/api/tasks/<id>/log` | Read or append work log |
+| POST | `/api/mcp` | MCP over streamable HTTP (see above) |
 | POST | `/api/login` | Exchange email/password for a session cookie |
 
 Every route above except `/api/login` requires a caller: either an `x-api-key`

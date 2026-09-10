@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers'
-import { createSession, SESSION_COOKIE } from '@/lib/auth'
+import { createSession, setSessionCookie } from '@/lib/auth'
 import { bad, json } from '../_util'
 
 /**
@@ -14,13 +13,10 @@ import { bad, json } from '../_util'
  * (see lib/auth.ts's doc comment). A second copy of that guard here would
  * be free to drift from the one that was measured.
  *
- * The cookies().set(...) call below is copied attribute-for-attribute from
- * app/login/actions.ts's login() (Ruling 65) — httpOnly, secure only in
- * production, sameSite: 'lax', path: '/', same expiry source. sameSite:
- * 'lax' is this app's only CSRF defence (see resolveCaller's doc comment in
- * lib/auth.ts); a route that set the cookie differently would silently
- * reopen that hole for every client using this endpoint instead of the
- * browser form.
+ * The cookie is written by lib/auth.ts's setSessionCookie(), the single
+ * place both front doors go through (Ruling 65), so this route's attributes
+ * cannot drift from the browser form's. sameSite: 'lax' is this app's only
+ * CSRF defence — see that function's doc comment.
  *
  * Unauthenticated and internet-reachable by design, with no bespoke rate
  * limiting (Ruling 67) — the same exposure the browser's login form already
@@ -40,12 +36,6 @@ export async function POST(req: Request) {
     return bad('Invalid email or password.', 401)
   }
 
-  ;(await cookies()).set(SESSION_COOKIE, session.secret, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    expires: new Date(session.expire),
-  })
+  await setSessionCookie(session.secret, session.expire)
   return json({ ok: true })
 }

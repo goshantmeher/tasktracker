@@ -46,6 +46,26 @@ export async function createSession(email: string, password: string): Promise<Se
   return { ok: true, secret: session.secret, expire: session.expire }
 }
 
+/**
+ * Writes the session cookie. Both login front doors go through here —
+ * app/login/actions.ts (the browser form) and app/api/login/route.ts (every
+ * non-browser client) — so the attributes cannot drift apart between them.
+ *
+ * sameSite: 'lax' is this app's ONLY CSRF defence. There are no CSRF tokens
+ * anywhere, and resolveCaller accepts this cookie on every REST route, so a
+ * login path that set 'none' here would silently open CSRF across the whole
+ * API. That is why this lives in one place instead of being copied.
+ */
+export async function setSessionCookie(secret: string, expire: string): Promise<void> {
+  ;(await cookies()).set(SESSION_COOKIE, secret, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    expires: new Date(expire),
+  })
+}
+
 /** Deletes the Appwrite session behind `secret`. Tolerant of an already-invalid secret. */
 export async function destroySession(secret: string): Promise<void> {
   try {

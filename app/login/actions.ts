@@ -2,7 +2,7 @@
 
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { createSession, destroySession, SESSION_COOKIE } from '@/lib/auth'
+import { createSession, destroySession, setSessionCookie, SESSION_COOKIE } from '@/lib/auth'
 
 export async function login(_prev: string | null, formData: FormData) {
   const email = String(formData.get('email') ?? '')
@@ -16,13 +16,7 @@ export async function login(_prev: string | null, formData: FormData) {
     return 'Invalid email or password.'
   }
 
-  ;(await cookies()).set(SESSION_COOKIE, session.secret, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    expires: new Date(session.expire),
-  })
+  await setSessionCookie(session.secret, session.expire)
   redirect('/')
 }
 

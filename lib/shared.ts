@@ -35,3 +35,16 @@ export type TaskInput = Omit<Task, 'id' | 'projectId' | 'updatedAt'>
 export type LogEntry = {
   id: string; taskId: string; author: string; body: string; createdAt: string
 }
+
+/**
+ * Whitelists a raw string against an allowed set of values — the check
+ * behind every `pick(name, allowed)` helper that reads a scalar enum field
+ * (status/type/priority/...) off a FormData at a trust boundary, e.g.
+ * app/p/[slug]/actions.ts. Kept here rather than inline in those 'use
+ * server' action files because Next.js strips non-async exports from a
+ * 'use server' module (verified: the export silently disappears from the
+ * compiled bundle), so this is the only way to unit-test it directly.
+ */
+export function isAllowed<T extends readonly string[]>(v: string, allowed: T): v is T[number] {
+  return (allowed as readonly string[]).includes(v)
+}

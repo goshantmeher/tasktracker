@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "setup": "node scripts/setup-appwrite.mjs"
+    "setup": "node scripts/setup-appwrite.mjs",
+    "test:api": "node --import tsx test/api-contract.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

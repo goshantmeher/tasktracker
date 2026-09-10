@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -46,33 +46,53 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Board palette. Hardcoded hex on purpose: these are the fixed brand
+     surfaces of the board chrome, not theme-able values. The shadcn tokens
+     above still drive every component outside that chrome. */
+  --color-tt-blue: #0c66e4;
+  --color-tt-blue-hover: #0055cc;
+  --color-tt-blue-subtle: #e9f2ff;
+  --color-tt-text: #172b4d;
+  --color-tt-subtle: #626f86;
+  --color-tt-border: #dfe1e6;
+  --color-tt-column: #f1f2f4;
+  --color-tt-sidebar: #f7f8f9;
+  --color-tt-hover: #f1f2f4;
+  --color-tt-green: #216e4e;
+  --color-tt-green-bg: #dcfff1;
+  --color-tt-red: #ae2e24;
+  --color-tt-red-bg: #ffecea;
+  --color-tt-yellow: #a54800;
+  --color-tt-yellow-bg: #fff7d6;
+  --color-tt-grey-bg: #dcdfe4;
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --background: #ffffff;
+  --foreground: #172b4d;
+  --card: #ffffff;
+  --card-foreground: #172b4d;
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --primary: #0c66e4;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f2f4;
+  --secondary-foreground: #172b4d;
+  --muted: #f1f2f4;
+  --muted-foreground: #626f86;
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: #dfe1e6;
+  --input: #dfe1e6;
+  --ring: #0c66e4;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
+  --radius: 0.1875rem; /* 3px corners, not shadcn's 10px */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -146,3 +166,16 @@
 .md blockquote { border-left: 3px solid var(--border); padding-left: 0.75rem; color: var(--muted-foreground); }
 .md a { text-decoration: underline; }
 .md input[type="checkbox"] { margin-right: 0.4rem; }
+/* --- Board chrome ------------------------------------------------------ */
+
+/* A thin scrollbar, scoped to the elements that actually scroll (the lanes
+   and the long pages) so it never sits under the page chrome. */
+.tt-scroll { scrollbar-width: thin; scrollbar-color: #c1c7d0 transparent; }
+.tt-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
+.tt-scroll::-webkit-scrollbar-thumb { background: #c1c7d0; border-radius: 4px; }
+.tt-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Card lift on drag: a 2deg tilt plus a raised shadow. */
+.tt-card { box-shadow: 0 1px 1px rgba(9, 30, 66, 0.25), 0 0 1px rgba(9, 30, 66, 0.31); }
+.tt-card:hover { background: #f7f8f9; }
+.tt-card-dragging { transform: rotate(2deg); box-shadow: 0 8px 16px rgba(9, 30, 66, 0.25); }

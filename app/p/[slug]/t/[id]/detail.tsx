@@ -10,6 +10,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
+// The stored enum values are snake_case; the UI shows prose. Display-only —
+// the value submitted in FormData is still the raw enum.
+const OPTION_LABEL: Record<string, string> = {
+  backlog: 'Backlog', todo: 'To Do', in_progress: 'In Progress',
+  blocked: 'Blocked', done: 'Done',
+  bug: 'Bug', feature: 'Feature', chore: 'Chore',
+  low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent',
+}
+
 const PLACEHOLDER: Record<string, string> = {
   description: 'What is this task?',
   requirement: 'What does done look like?',
@@ -62,12 +71,12 @@ export function MarkdownField({
   }
 
   return (
-    <section className="mb-6">
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="mb-5">
+      <h3 className="mb-1 flex items-baseline gap-2 text-sm font-semibold">
         {label}
-        {pending && <span className="ml-2 font-normal normal-case">saving…</span>}
+        {pending && <span className="text-[12px] font-normal text-tt-subtle">saving…</span>}
         {error && !pending && (
-          <span className="ml-2 font-normal normal-case text-destructive">
+          <span className="text-[12px] font-normal text-tt-red">
             not saved: {error} — edit and click away to retry
           </span>
         )}
@@ -79,16 +88,16 @@ export function MarkdownField({
           onChange={e => { setText(e.target.value); setError(null) }}
           onBlur={commit}
           rows={Math.max(4, text.split('\n').length + 1)}
-          className="w-full rounded border p-2 font-mono text-sm"
+          className="w-full rounded-[3px] border-2 border-tt-blue bg-white p-2.5 font-mono text-sm outline-none"
         />
       ) : (
         <div
           onClick={() => setEditing(true)}
-          className="min-h-[2rem] cursor-text rounded p-2 hover:bg-muted/50"
+          className="min-h-[2.25rem] cursor-text rounded-[3px] p-2 hover:bg-tt-hover"
         >
           {text.trim()
             ? <Markdown>{text}</Markdown>
-            : <span className="text-sm text-muted-foreground">{PLACEHOLDER[field]}</span>}
+            : <span className="text-sm text-tt-subtle">{PLACEHOLDER[field]}</span>}
         </div>
       )}
     </section>
@@ -116,10 +125,16 @@ function ScalarSelect({ name, options, defaultValue }: {
   return (
     <Select key={defaultValue} name={name} defaultValue={defaultValue}>
       <SelectTrigger size="sm">
-        <SelectValue />
+        {/* Base UI's Select.Value takes a formatter function (verified in
+            node_modules/@base-ui/react/select/value/SelectValue.d.ts); without
+            it the trigger shows the raw stored enum, so the panel would read
+            "in_progress" instead of "In Progress". */}
+        <SelectValue>{(v: string) => OPTION_LABEL[v] ?? v}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {options.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+        {options.map(o => (
+          <SelectItem key={o} value={o}>{OPTION_LABEL[o] ?? o}</SelectItem>
+        ))}
       </SelectContent>
     </Select>
   )
@@ -166,20 +181,58 @@ export function ScalarForm({
   }
 
   return (
-    <div className="mb-8">
-      <form onSubmit={submit}
-        className="flex flex-wrap items-center gap-2 rounded border bg-muted/40 p-3">
-        <ScalarSelect name="status" options={STATUSES} defaultValue={status} />
-        <ScalarSelect name="type" options={TYPES} defaultValue={type} />
-        <ScalarSelect name="priority" options={PRIORITIES} defaultValue={priority} />
-        <Input name="assignee" defaultValue={assignee} placeholder="Assignee"
-          maxLength={TASK_STRING_MAX.assignee} className="w-40" />
-        <Input name="labels" defaultValue={labels.join(', ')}
-          placeholder={`up to ${LABEL_COUNT_MAX} labels, comma-separated — a label can't itself contain a comma (each up to ${LABEL_MAX} chars)`}
-          className="flex-1" />
-        <Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Save'}</Button>
+    <aside className="w-full shrink-0 lg:w-[300px]">
+      <form
+        onSubmit={submit}
+        className="rounded-[3px] border border-tt-border bg-white"
+      >
+        <div className="border-b border-tt-border px-3 py-2 text-sm font-semibold">Details</div>
+
+        <div className="space-y-3 p-3">
+          <Row label="Status">
+            <ScalarSelect name="status" options={STATUSES} defaultValue={status} />
+          </Row>
+          <Row label="Type">
+            <ScalarSelect name="type" options={TYPES} defaultValue={type} />
+          </Row>
+          <Row label="Priority">
+            <ScalarSelect name="priority" options={PRIORITIES} defaultValue={priority} />
+          </Row>
+          <Row label="Assignee">
+            {/* `key` for the same reason ScalarSelect carries one: shadcn's
+                Input is a Base UI FieldControl, uncontrolled here, and after
+                a Save the server sends a fresh defaultValue down — which it
+                logs as "changing the default value state of an uncontrolled
+                FieldControl" while continuing to show the old text. Safe to
+                remount: these only change on Save or an outside write. */}
+            <Input key={assignee} name="assignee" defaultValue={assignee} placeholder="Unassigned"
+              maxLength={TASK_STRING_MAX.assignee} className="h-8 text-sm" />
+          </Row>
+          <Row label="Labels">
+            <Input key={labels.join(', ')} name="labels" defaultValue={labels.join(', ')} placeholder="None"
+              className="h-8 text-sm" />
+          </Row>
+          <p className="text-[11px] leading-4 text-tt-subtle">
+            Up to {LABEL_COUNT_MAX} labels, comma-separated. A label can’t itself
+            contain a comma (each up to {LABEL_MAX} characters).
+          </p>
+
+          <Button type="submit" disabled={pending} className="w-full">
+            {pending ? 'Saving…' : 'Save'}
+          </Button>
+          {error && <p className="text-xs text-tt-red">not saved: {error}</p>}
+        </div>
       </form>
-      {error && <p className="mt-1.5 text-xs text-destructive">not saved: {error}</p>}
+    </aside>
+  )
+}
+
+/** One `Label / control` row of the Details panel. */
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[84px_1fr] items-center gap-2">
+      <span className="text-[12px] font-medium text-tt-subtle">{label}</span>
+      {children}
     </div>
   )
 }

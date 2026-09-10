@@ -8,10 +8,10 @@ import { Board } from './board'
 
 export default async function BoardPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const user = await currentUser()
+  // Independent of each other, so they go together; listTasks below is the
+  // one that genuinely has to wait, since it needs the project's id.
+  const [user, project] = await Promise.all([currentUser(), getProjectBySlug(slug)])
   if (!user) redirect('/login')
-
-  const project = await getProjectBySlug(slug)
   if (!project) notFound()
   // No `limit` here — listTasks's own default (5000) is the real ceiling now.
   // A hardcoded 500 would silently truncate a large project's board again,

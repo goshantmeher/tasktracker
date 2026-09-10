@@ -7,9 +7,8 @@ import { AppShell } from '@/components/app-shell'
 import { Avatar } from '@/components/issue'
 
 export default async function KeysPage() {
-  const user = await currentUser()
+  const [user, keys] = await Promise.all([currentUser(), listKeys()])
   if (!user) redirect('/login')
-  const keys = await listKeys()
 
   return (
     <AppShell user={user}>

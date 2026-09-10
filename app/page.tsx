@@ -8,9 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 export default async function Home() {
-  const user = await currentUser()
+  const [user, projects] = await Promise.all([currentUser(), listProjects()])
   if (!user) redirect('/login')
-  const projects = await listProjects()
 
   return (
     <AppShell user={user}>

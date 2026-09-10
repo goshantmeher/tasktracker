@@ -21,13 +21,19 @@ export default async function TaskPage(
   { params }: { params: Promise<{ slug: string; id: string }> }
 ) {
   const { slug, id } = await params
-  const user = await currentUser()
+  // One round trip, not four. Every one of these depends only on `slug` and
+  // `id`, both of which are already in hand — the old sequential awaits were
+  // a waterfall by accident, not because anything needed the previous answer.
+  // The checks below are unchanged and still run before anything renders;
+  // only the fetching moved. Cost of getting this wrong is small and known:
+  // a request with a stale cookie now does three reads before its redirect,
+  // where it used to do none. There is no ownership model to leak through.
+  const [user, project, task, log] = await Promise.all([
+    currentUser(), getProjectBySlug(slug), getTask(id), listLog(id),
+  ])
   if (!user) redirect('/login')
-  const project = await getProjectBySlug(slug)
   if (!project) notFound()
-  const task = await getTask(id)
   if (!task || task.projectId !== project.id) notFound()
-  const log = await listLog(task.id)
   const key = issueKey(slug, task.id)
 
   return (

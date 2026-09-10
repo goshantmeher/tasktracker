@@ -12,6 +12,50 @@ const db = () => new Databases(serverClient())
 export { STATUSES, TYPES, PRIORITIES, MD_FIELDS } from './shared'
 export type { Status, Task, TaskInput, Project, LogEntry } from './shared'
 
+// --- internal call helpers -------------------------------------------------
+// The three repeated shapes behind every function below: list+map,
+// list-and-take-first+map, get-by-id+map (null on not-found), and
+// create/update+map. Collection name + queries/data + mapper in, model out.
+// Nothing fancier than that: no repository class, no query builder.
+
+async function listDocs<T>(
+  collection: string, queries: string[], toModel: (d: Models.DefaultDocument) => T,
+): Promise<T[]> {
+  const res = await db().listDocuments(DB, collection, queries)
+  return res.documents.map(toModel)
+}
+
+async function firstDoc<T>(
+  collection: string, queries: string[], toModel: (d: Models.DefaultDocument) => T,
+): Promise<T | null> {
+  const res = await db().listDocuments(DB, collection, queries)
+  return res.documents[0] ? toModel(res.documents[0]) : null
+}
+
+async function docById<T>(
+  collection: string, id: string, toModel: (d: Models.DefaultDocument) => T,
+): Promise<T | null> {
+  try {
+    return toModel(await db().getDocument(DB, collection, id))
+  } catch {
+    return null
+  }
+}
+
+async function insertDoc<T>(
+  collection: string, data: Record<string, unknown>, toModel: (d: Models.DefaultDocument) => T,
+): Promise<T> {
+  return toModel(await db().createDocument(DB, collection, ID.unique(), data))
+}
+
+async function patchDoc<T>(
+  collection: string, id: string, data: Record<string, unknown>, toModel: (d: Models.DefaultDocument) => T,
+): Promise<T> {
+  return toModel(await db().updateDocument(DB, collection, id, data))
+}
+
+// ----------------------------------------------------------------------------
+
 // Models.Document has no field index signature; DefaultDocument does, and is
 // what listDocuments/createDocument/updateDocument actually resolve to when
 // called without an explicit generic (as every call in this file does).
@@ -27,27 +71,17 @@ export function slugify(name: string) {
 }
 
 export async function listProjects(): Promise<Project[]> {
-  const res = await db().listDocuments(DB, 'projects', [
-    Query.orderAsc('name'),
-    Query.limit(100),
-  ])
-  const all = res.documents.map(toProject)
+  const all = await listDocs('projects', [Query.orderAsc('name'), Query.limit(100)], toProject)
   // Archived sort below the rest, per the spec.
   return [...all.filter(p => !p.archived), ...all.filter(p => p.archived)]
 }
 
 export async function getProjectBySlug(slug: string): Promise<Project | null> {
-  const res = await db().listDocuments(DB, 'projects', [Query.equal('slug', slug), Query.limit(1)])
-  return res.documents[0] ? toProject(res.documents[0]) : null
+  return firstDoc('projects', [Query.equal('slug', slug), Query.limit(1)], toProject)
 }
 
 export async function createProject(name: string): Promise<Project> {
-  const doc = await db().createDocument(DB, 'projects', ID.unique(), {
-    name,
-    slug: slugify(name),
-    archived: false,
-  })
-  return toProject(doc)
+  return insertDoc('projects', { name, slug: slugify(name), archived: false }, toProject)
 }
 
 export async function setArchived(id: string, archived: boolean): Promise<void> {
@@ -94,19 +128,14 @@ export async function listTasks(f: TaskFilter): Promise<Task[]> {
   if (f.assignee) q.push(Query.equal('assignee', f.assignee))
   if (f.label) q.push(Query.contains('labels', f.label))
   q.push(Query.limit(f.limit ?? 100))
-  const res = await db().listDocuments(DB, 'tasks', q)
-  const tasks = res.documents.map(toTask)
+  const tasks = await listDocs('tasks', q, toTask)
   // Group by status in the canonical column order, ordered within each column.
   return tasks.sort((a, b) =>
     STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || a.order - b.order)
 }
 
 export async function getTask(id: string): Promise<Task | null> {
-  try {
-    return toTask(await db().getDocument(DB, 'tasks', id))
-  } catch {
-    return null
-  }
+  return docById('tasks', id, toTask)
 }
 
 /** One past the last card in a column, so new tasks land at the bottom. */
@@ -123,7 +152,7 @@ export async function bottomOrder(projectId: string, status: Status): Promise<nu
 
 export async function createTask(projectId: string, input: Partial<TaskInput> & { title: string }) {
   const status = (input.status ?? 'backlog') as Status
-  const doc = await db().createDocument(DB, 'tasks', ID.unique(), {
+  return insertDoc('tasks', {
     projectId,
     title: input.title,
     description: input.description ?? '',
@@ -137,8 +166,7 @@ export async function createTask(projectId: string, input: Partial<TaskInput> & 
     assignee: input.assignee ?? '',
     labels: input.labels ?? [],
     order: input.order ?? (await bottomOrder(projectId, status)),
-  })
-  return toTask(doc)
+  }, toTask)
 }
 
 /**
@@ -153,7 +181,7 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
   ]
   const body: Record<string, unknown> = {}
   for (const k of allowed) if (k in patch) body[k] = patch[k]
-  return toTask(await db().updateDocument(DB, 'tasks', id, body))
+  return patchDoc('tasks', id, body, toTask)
 }
 
 // Not in the original task interface list; needed by the REST API (Task 9)

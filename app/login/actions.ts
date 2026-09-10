@@ -2,35 +2,26 @@
 
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { Account } from 'node-appwrite'
-import { adminClient, sessionClient } from '@/lib/appwrite'
-import { SESSION_COOKIE } from '@/lib/auth'
+import { createSession, destroySession, SESSION_COOKIE } from '@/lib/auth'
 
 export async function login(_prev: string | null, formData: FormData) {
   const email = String(formData.get('email') ?? '')
   const password = String(formData.get('password') ?? '')
   if (!email || !password) return 'Email and password are required.'
 
-  let secret: string, expire: string
-  try {
-    const session = await new Account(adminClient())
-      .createEmailPasswordSession(email, password)
-    secret = session.secret
-    expire = session.expire
-    // A keyless client returns a session with an empty secret. Fail loudly
-    // rather than storing "" in the cookie and pretending we are logged in.
-    if (!secret) return 'Login succeeded but no session secret was returned.'
-  } catch {
+  const session = await createSession(email, password)
+  if (!session.ok) {
     // Deliberately not distinguishing unknown-email from wrong-password.
+    if (session.reason === 'no_secret') return 'Login succeeded but no session secret was returned.'
     return 'Invalid email or password.'
   }
 
-  ;(await cookies()).set(SESSION_COOKIE, secret, {
+  ;(await cookies()).set(SESSION_COOKIE, session.secret, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    expires: new Date(expire),
+    expires: new Date(session.expire),
   })
   redirect('/')
 }
@@ -38,9 +29,7 @@ export async function login(_prev: string | null, formData: FormData) {
 export async function logout() {
   const jar = await cookies()
   const secret = jar.get(SESSION_COOKIE)?.value
-  if (secret) {
-    try { await new Account(sessionClient(secret)).deleteSession('current') } catch {}
-  }
+  if (secret) await destroySession(secret)
   jar.delete(SESSION_COOKIE)
   redirect('/login')
 }

@@ -48,11 +48,25 @@ async function firstDoc<T>(
   return res.documents[0] ? toModel(res.documents[0]) : null
 }
 
+/**
+ * Every id that lands in an Appwrite document path goes through here first.
+ * An empty id collapses `/documents/<id>` to `/documents` — the *collection*
+ * endpoint — and in Appwrite 1.9 that is the bulk API: `updateDocument(DB,
+ * 'tasks', '', { status })` is accepted as "update every row in tasks" and
+ * silently rewrites the whole collection. Found the hard way, on a live
+ * board. One guard here covers every door (REST, MCP, Server Actions),
+ * which is why it lives beside the call helpers and not in each caller.
+ */
+const docId = (id: string): string => {
+  if (typeof id !== 'string' || id.trim() === '') throw new Error('document id is required')
+  return id
+}
+
 async function docById<T>(
   collection: string, id: string, toModel: (d: Models.DefaultDocument) => T,
 ): Promise<T | null> {
   try {
-    return toModel(await db().getDocument(DB, collection, id))
+    return toModel(await db().getDocument(DB, collection, docId(id)))
   } catch (e) {
     // Only a real "no such document" is absence. Anything else — a network
     // failure, an unauthorized key, a malformed id, a misconfigured
@@ -79,7 +93,7 @@ async function insertDoc<T>(
 async function patchDoc<T>(
   collection: string, id: string, data: Record<string, unknown>, toModel: (d: Models.DefaultDocument) => T,
 ): Promise<T> {
-  return toModel(await db().updateDocument(DB, collection, id, data))
+  return toModel(await db().updateDocument(DB, collection, docId(id), data))
 }
 
 // ----------------------------------------------------------------------------
@@ -113,13 +127,13 @@ export async function createProject(name: string): Promise<Project> {
 }
 
 export async function setArchived(id: string, archived: boolean): Promise<void> {
-  await db().updateDocument(DB, 'projects', id, { archived })
+  await db().updateDocument(DB, 'projects', docId(id), { archived })
 }
 
 // Not in the original task interface list; added for the probe script's
 // cleanup and because later tasks will want it too.
 export async function deleteProject(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'projects', id)
+  await db().deleteDocument(DB, 'projects', docId(id))
 }
 
 const toTask = (d: Models.DefaultDocument): Task => ({
@@ -222,7 +236,7 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
 // nothing edits an entry — but a deleted task's entries are unreachable
 // garbage, so both callers clear them first via deleteLog.
 export async function deleteTask(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'tasks', id)
+  await db().deleteDocument(DB, 'tasks', docId(id))
 }
 
 const toLog = (d: Models.DefaultDocument): LogEntry => ({
@@ -286,7 +300,7 @@ export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<M
 // live Appwrite, can remove what they created; nothing in app/ calls it.
 // Mirrors deleteTask/deleteProject above, added for the same reason.
 export async function deleteLog(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'worklog', id)
+  await db().deleteDocument(DB, 'worklog', docId(id))
 }
 
 // --- API keys ---------------------------------------------------------------
@@ -325,7 +339,7 @@ export async function createKey(label: string, createdBy: string): Promise<{ key
 }
 
 export async function revokeKey(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'api_keys', id)
+  await db().deleteDocument(DB, 'api_keys', docId(id))
 }
 
 export async function findKeyByHash(hash: string): Promise<ApiKey | null> {
@@ -343,7 +357,7 @@ export async function findKeyByHash(hash: string): Promise<ApiKey | null> {
  */
 export async function touchKey(id: string): Promise<void> {
   try {
-    await db().updateDocument(DB, 'api_keys', id, { lastUsedAt: new Date().toISOString() })
+    await db().updateDocument(DB, 'api_keys', docId(id), { lastUsedAt: new Date().toISOString() })
   } catch {
     // Recording last-use must never fail a request that already authenticated.
   }

@@ -15,10 +15,19 @@ assert.ok(KEY, 'TEST_API_KEY must be set in .env.local (mint one at /settings/ke
 // instead of just "some non-empty string". deleteTask is looked up the same
 // way for the same reason: no REST DELETE route exists (by design — see
 // lib/db.ts), so cleanup below has to go straight through lib/db.ts too.
-const { findKeyByHash, deleteTask } = await import('../lib/db.ts')
+const { findKeyByHash, deleteTask, getTask } = await import('../lib/db.ts')
 const { hashKey } = await import('../lib/keys.mjs')
 const keyRecord = await findKeyByHash(hashKey(KEY))
 assert.ok(keyRecord, 'TEST_API_KEY does not resolve to a real key record')
+
+// A blank document id used to collapse Appwrite's /documents/<id> path down to
+// the collection endpoint, which in 1.9 is the *bulk* API: updateTask('', {
+// status }) was accepted as "update every row in tasks" and rewrote a whole
+// live board. lib/db.ts rejects blank ids at the one place every door routes
+// through; this is the check that it still does. Read-only on purpose — if
+// the guard ever regresses, this fails without touching a single row.
+await assert.rejects(() => getTask(''), /document id is required/,
+  'a blank id must never reach Appwrite')
 
 // Every task this run creates against the real, live Appwrite project, so it
 // can be removed again at the end — even if an assertion above throws.

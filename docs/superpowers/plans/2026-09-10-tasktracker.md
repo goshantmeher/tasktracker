@@ -46,14 +46,22 @@ Apply this substitution wherever the task JSX uses the raw element:
 
 Components to install: `button input textarea select card badge label separator`.
 
+**The primitive library is Base UI, not Radix.** shadcn CLI 4.21 installs
+`@base-ui/react` (1.8.0 here) under the Nova preset — Lucide icons, Geist,
+neutral base, CSS variables. Component APIs differ from the Radix-era shadcn
+snippets that most examples show; read `components/ui/*.tsx` in this repo for
+the actual prop surface rather than recalling shadcn from memory.
+
 **One trap that will bite silently.** Several forms in this plan submit with a
 server action and read values out of `FormData` by `name` — the scalar-fields
-form in Task 6 above all. shadcn's `Select` is a Radix component, not a native
-`<select>`, so a `name` prop on `SelectTrigger` submits nothing. Pass `name` to
-the **`<Select>` root**, which renders a hidden native input, and then prove it
-works: submit the form, and assert the changed value actually persisted. If the
-value does not arrive, keep a hidden `<input type="hidden">` synced to the
-Select's state. Do not assume it submitted because the UI looked right.
+form in Task 6 above all. `Select` is a Base UI component, not a native
+`<select>`, so a `name` prop on `SelectTrigger` submits nothing. Pass `name`
+and `defaultValue` to the **`<Select>` root**: Base UI renders a visually
+hidden input carrying that name (verified in
+`node_modules/@base-ui/react/select/root/SelectRoot.js`, lines 374 and 445),
+which is what lands in `FormData`. Then prove it: submit the form and assert
+the value actually persisted. Do not assume it submitted because the UI looked
+right.
 
 ### Two deviations from the spec, and why
 

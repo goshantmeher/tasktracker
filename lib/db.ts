@@ -217,10 +217,10 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
   return patchDoc('tasks', id, body, toTask)
 }
 
-// PROBE-ONLY, exactly like deleteLog/deleteProject elsewhere in this file:
-// there is no DELETE route for tasks anywhere in app/api, and none is
-// planned — this exists solely so probe scripts that write real documents
-// against live Appwrite can remove what they created.
+// A real delete, reachable from both front doors (DELETE /api/tasks/:id and
+// the detail page's Delete button). The worklog is append-only *per task* —
+// nothing edits an entry — but a deleted task's entries are unreachable
+// garbage, so both callers clear them first via deleteLog.
 export async function deleteTask(id: string): Promise<void> {
   await db().deleteDocument(DB, 'tasks', id)
 }

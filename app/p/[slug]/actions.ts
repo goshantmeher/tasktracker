@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
 import {
   createTask, updateTask, getProjectBySlug, getTask, addLog,
+  deleteTask, listLog, deleteLog,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Status, type TaskInput,
 } from '@/lib/db'
 import {
@@ -41,6 +42,29 @@ export async function moveTask(slug: string, taskId: string, status: Status, ord
   if (!task || task.projectId !== project.id) return
   await updateTask(taskId, { status, order })
   revalidatePath(`/p/${slug}`)
+}
+
+/**
+ * Delete a task and its work log, then land back on the board.
+ *
+ * Deliberately a hard delete, not an archive: a task that shouldn't be on
+ * the board has no other place to be in this tracker, and an `archived`
+ * flag would mean a schema migration plus an "include archived?" question
+ * in every list call and at both front doors. The button that calls this
+ * confirms first (see delete-task.tsx) — that is the whole safety net.
+ */
+export async function removeTask(slug: string, taskId: string) {
+  await requireUser()
+  // Same integrity guard as moveTask: taskId and slug arrive independently.
+  const project = await getProjectBySlug(slug)
+  if (!project) return
+  const task = await getTask(taskId)
+  if (!task || task.projectId !== project.id) return
+
+  for (const entry of await listLog(taskId, 500)) await deleteLog(entry.id)
+  await deleteTask(taskId)
+  revalidatePath(`/p/${slug}`)
+  redirect(`/p/${slug}`)
 }
 
 export async function quickAddTask(slug: string, formData: FormData) {

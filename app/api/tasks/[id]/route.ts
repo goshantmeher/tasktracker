@@ -1,5 +1,8 @@
 import { requireCaller, isResponse, json, bad, checkStringField, TASK_STRING_MAX, checkLabels, checkOrder } from '../../_util'
-import { getTask, updateTask, STATUSES, TYPES, PRIORITIES, MD_FIELDS, type TaskInput } from '@/lib/db'
+import {
+  getTask, updateTask, deleteTask, listLog, deleteLog,
+  STATUSES, TYPES, PRIORITIES, MD_FIELDS, type TaskInput,
+} from '@/lib/db'
 
 const WRITABLE = [
   'title', ...MD_FIELDS, 'type', 'status', 'priority', 'assignee', 'labels', 'order',
@@ -47,4 +50,21 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (isResponse(caller)) return caller
   const task = await getTask((await ctx.params).id)
   return task ? json(task) : bad('no such task', 404)
+}
+
+/**
+ * Deletes the task and its work log entries. The log is cleared first: its
+ * rows are only reachable through their taskId, so a task removed while
+ * they remain leaves rows nothing can ever read or remove.
+ */
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const caller = await requireCaller(req)
+  if (isResponse(caller)) return caller
+
+  const { id } = await ctx.params
+  if (!(await getTask(id))) return bad('no such task', 404)
+
+  for (const entry of await listLog(id, 500)) await deleteLog(entry.id)
+  await deleteTask(id)
+  return json({ deleted: id })
 }

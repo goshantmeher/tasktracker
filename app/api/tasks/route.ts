@@ -3,6 +3,7 @@ import {
   getProjectBySlug, listTasks, createTask,
   STATUSES, TYPES, PRIORITIES, type Status,
 } from '@/lib/db'
+import { pickFields } from '@/lib/shared'
 
 const csv = (v: string | null) => (v ? v.split(',').map(s => s.trim()).filter(Boolean) : undefined)
 
@@ -35,15 +36,31 @@ export async function GET(req: Request) {
     if (!Number.isFinite(limit) || limit <= 0) return bad('limit must be a positive number')
   }
 
+  // `labels` + `match` are the multi-tag form of `label`, which still works
+  // as the one-element case; `fields` narrows what each task costs. Same
+  // three parameters as the MCP door's list_tasks, through the same
+  // lib/db.ts filter and the same picker — this route only parses them.
+  const match = url.searchParams.get('match')
+  if (match !== null && match !== 'any' && match !== 'all')
+    return bad('match must be one of: any, all')
+
   const tasks = await listTasks({
     projectId: project.id,
     status: status as Status[] | undefined,
     type,
     assignee: url.searchParams.get('assignee') ?? undefined,
     label: url.searchParams.get('label') ?? undefined,
+    labels: csv(url.searchParams.get('labels')),
+    match: match ?? undefined,
     limit,
   })
-  return json({ tasks })
+
+  try {
+    return json({ tasks: pickFields(tasks, csv(url.searchParams.get('fields'))) })
+  } catch (e) {
+    // An unknown field name — a 400 that names the real ones, not a 500.
+    return bad(e instanceof Error ? e.message : 'fields is invalid')
+  }
 }
 
 export async function POST(req: Request) {

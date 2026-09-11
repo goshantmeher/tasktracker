@@ -214,13 +214,20 @@ That's it — no checkout of this repo, no local process. Seven tools:
 
 | Tool | Does |
 |---|---|
-| `get_board` | The whole board as markdown. Start here. |
+| `get_board` | The board as markdown: caveats in full, one line per open task. Start here. |
 | `list_projects` | Every project and its slug |
-| `list_tasks` | One board, filtered by status / type / assignee / label |
+| `list_tasks` | One board, filtered by status / type / assignee / label(s); `fields` narrows what each task costs |
 | `get_task` | One task with all five fields and its full log |
 | `create_task` | Add a task to the bottom of a column |
-| `update_task` | Partial update — omitted fields are left alone |
+| `update_task` | Partial update — omitted fields are left alone; `log` appends a work-log entry in the same call |
 | `add_log` | Append to the work log |
+
+An agent pays per *call*, not per byte, so the tools are shaped to need
+fewer of them: `update_task(id, status, result, log)` finishes a task in one
+call instead of two, writes answer with `{ok, id, updated}` rather than
+echoing back the body you just sent, `get_board` is an index rather than the
+contents (the full briefing is still `GET /api/context`), and any unique id
+*prefix* — the short form in a board URL — resolves the way a short SHA does.
 
 There is deliberately no `delete_task`: deleting is irreversible, takes the
 work log with it, and is the one operation a human should have to click.
@@ -269,7 +276,7 @@ left alone, so writing `result` cannot clobber a `requirement`.
 |---|---|---|
 | GET | `/api/context?project=<slug>` | Whole board as markdown. Start here. |
 | GET | `/api/projects` | List projects |
-| GET | `/api/tasks?project=<slug>` | Filter by `status`, `type`, `assignee`, `label`, `limit` |
+| GET | `/api/tasks?project=<slug>` | Filter by `status`, `type`, `assignee`, `label`, `labels`+`match`, `limit`; `fields` returns an index instead of full bodies |
 | POST | `/api/tasks` | Create. `project` and `title` required |
 | GET/PATCH/DELETE | `/api/tasks/<id>` | Read, partially update, or delete (also clears its log) |
 | GET/POST | `/api/tasks/<id>/log` | Read or append work log |

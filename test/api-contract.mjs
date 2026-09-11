@@ -63,8 +63,15 @@ try {
   // --- projects -----------------------------------------------------------
   const { body: { projects } } = await api('/api/projects')
   check('projects list returns an array', Array.isArray(projects))
-  const project = projects[0]
-  assert.ok(project, 'create at least one project in the UI before running this')
+  // TEST_PROJECT names the board this run is allowed to write to. Without
+  // it the suite writes its probe tasks into whatever project happens to be
+  // first — which on a shared instance is a real board someone is working.
+  const wanted = process.env.TEST_PROJECT
+  const project = wanted ? projects.find(p => p.slug === wanted) : projects[0]
+  assert.ok(project, wanted
+    ? `TEST_PROJECT=${wanted} does not match any project slug`
+    : 'create at least one project in the UI before running this')
+  console.log(`  · writing probe tasks to "${project.slug}"`)
 
   // --- create -------------------------------------------------------------
   const stamp = Date.now()
@@ -117,6 +124,48 @@ try {
     check('GET excludes non-matching statuses', !r2.body.tasks.some(t => t.id === id))
     const r3 = await api(`/api/tasks?project=${project.slug}`)
     check('GET with no status filter returns every status', r3.body.tasks.some(t => t.id === id))
+  }
+
+  // --- labels and fields: the same narrowing the MCP door does -------------
+  {
+    const tagged = await api('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        project: project.slug, title: `label probe ${stamp}`, labels: ['store', 'money'],
+      }),
+    })
+    createdTaskIds.push(tagged.body.id)
+
+    const created = await api('/api/tasks', {
+      method: 'POST', body: JSON.stringify({ project: project.slug, title: `untagged probe ${stamp}` }),
+    })
+    createdTaskIds.push(created.body.id)
+    check('a task created with no labels is defaulted, not left unreachable',
+      JSON.stringify(created.body.labels) === JSON.stringify(['untriaged']))
+
+    const all = await api(`/api/tasks?project=${project.slug}&labels=store,money&match=all`)
+    check('labels + match=all returns only tasks carrying every label',
+      all.body.tasks.length === 1 && all.body.tasks[0].id === tagged.body.id)
+
+    const any = await api(`/api/tasks?project=${project.slug}&labels=store,untriaged&match=any`)
+    check('match=any returns tasks carrying either',
+      any.body.tasks.some(t => t.id === tagged.body.id)
+      && any.body.tasks.some(t => t.id === created.body.id))
+
+    const single = await api(`/api/tasks?project=${project.slug}&label=store`)
+    check('the original single label parameter still behaves as it did',
+      single.body.tasks.length === 1 && single.body.tasks[0].id === tagged.body.id)
+
+    const badMatch = await api(`/api/tasks?project=${project.slug}&match=sideways`)
+    check('an unknown match is a 400', badMatch.status === 400)
+
+    const index = await api(`/api/tasks?project=${project.slug}&fields=id,title,status`)
+    check('fields returns only those keys, not every markdown body',
+      index.body.tasks.every(t => Object.keys(t).join() === 'id,title,status'))
+
+    const typo = await api(`/api/tasks?project=${project.slug}&fields=titel`)
+    check('a misspelled field is a 400 naming the real ones',
+      typo.status === 400 && typo.body.error.includes('title'))
   }
 
   // --- partial update -----------------------------------------------------

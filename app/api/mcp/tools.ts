@@ -1,10 +1,10 @@
 import {
-  listProjects, getProjectBySlug, listTasks, getTask, createTask, updateTask,
-  addLog, listLog, recentLogByTask,
-  STATUSES, TYPES, PRIORITIES, MD_FIELDS, type TaskInput,
+  listProjects, getProjectBySlug, listTasks, getTask, findTasksByIdPrefix,
+  createTask, updateTask, addLog, listLog,
+  STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Task, type TaskInput,
 } from '@/lib/db'
 import { renderContext } from '@/lib/context.mjs'
-import { TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX } from '@/lib/shared'
+import { TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX, pickFields } from '@/lib/shared'
 
 /**
  * The tools this tracker exposes over MCP, and the code behind them.
@@ -59,6 +59,10 @@ const labels = (v: unknown): string[] | undefined => {
   return v as string[]
 }
 
+/** Who a work-log entry is attributed to. Same default wherever one is written. */
+const author = (a: Record<string, unknown>): string =>
+  str(a.author, 'author', TASK_STRING_MAX.assignee) || 'claude'
+
 /** Resolves a project slug to a project, or explains that it doesn't exist. */
 async function project(slug: unknown) {
   const s = str(slug, 'project', 256, true)!
@@ -68,6 +72,35 @@ async function project(slug: unknown) {
     throw new ToolError(`no such project: ${s}. Known projects: ${known || '(none)'}`)
   }
   return p
+}
+
+/**
+ * Resolves a task id, accepting the short form from a board URL the way git
+ * accepts a short SHA. An exact id costs exactly what it did before (one
+ * lookup); only a miss pays for the prefix search. A failed call that names
+ * the right call is most of the value here — every alternative spends a
+ * whole turn to learn nothing.
+ */
+async function resolveTask(rawId: unknown): Promise<Task> {
+  const id = str(rawId, 'id', 64, true)!
+  const exact = await getTask(id)
+  if (exact) return exact
+
+  const matches = await findTasksByIdPrefix(id)
+  if (matches.length === 1) {
+    const task = await getTask(matches[0].id)
+    if (task) return task
+  }
+  if (matches.length > 1) {
+    // ponytail: lists at most findTasksByIdPrefix's 5 candidates, so a very
+    // short prefix undercounts. Enough to make the caller lengthen it, which
+    // is the only useful response anyway — raise the limit if that stops
+    // being true.
+    throw new ToolError(
+      `ambiguous task id: ${id} matches ${matches.length} tasks — ` +
+      matches.map(m => `${m.id} ("${m.title}")`).join(', '))
+  }
+  throw new ToolError(`no such task: ${id}`)
 }
 
 /**
@@ -110,14 +143,24 @@ const TASK_FIELDS = {
   labels: { type: 'array', items: { type: 'string' }, description: `Up to ${LABEL_COUNT_MAX} labels.` },
 } as const
 
-const LOG_STATUSES = ['in_progress', 'blocked', 'todo']
+/**
+ * `fields` off the wire, where it can be any JSON at all. The narrowing
+ * itself is lib/shared.ts's, shared with the REST door; a plain Error from
+ * it reaches the caller as tool-error content exactly like a ToolError does.
+ */
+function pick(tasks: Task[], fields: unknown): unknown[] {
+  if (fields === undefined || fields === null) return tasks
+  if (!Array.isArray(fields) || !fields.every(f => typeof f === 'string'))
+    throw new ToolError('fields must be an array of strings')
+  return pickFields(tasks, fields as string[])
+}
 
 export const TOOLS: ToolDef[] = [
   {
     name: 'get_board',
     title: 'Read the whole board',
     description:
-      'Start here. Returns the entire board as markdown: caveats to keep in mind first, then open tasks with their descriptions, requirements and recent work log, then finished work. One call gives you the whole picture — prefer it over listing tasks and fetching them one by one.',
+      'Start here. The board as markdown: caveats to keep in mind in full, then one line per open task (id, title, type, priority, assignee, labels), then a count of finished work. Deliberately an index, not the contents — read a task you are going to work on with get_task.',
     inputSchema: {
       type: 'object',
       properties: { project: { type: 'string', description: 'Project slug, e.g. "checkout-revamp".' } },
@@ -129,9 +172,12 @@ export const TOOLS: ToolDef[] = [
       // an agent catching up on a large board must not silently get a
       // partial one.
       const tasks = await listTasks({ projectId: p.id })
-      const logTargets = tasks.filter(t => LOG_STATUSES.includes(t.status))
-      const logByTask = await recentLogByTask(logTargets.map(t => t.id))
-      return renderContext({ project: p, tasks, logByTask })
+      // Summary form: the full briefing (GET /api/context, same renderer)
+      // exceeded this door's token cap on a real board, which made the
+      // documented entry point uncallable. No work-log fetch here either —
+      // the entries belong to the bodies this form leaves out, and skipping
+      // them drops one query per open task.
+      return renderContext({ project: p, tasks, summary: true })
     },
   },
   {
@@ -145,7 +191,7 @@ export const TOOLS: ToolDef[] = [
     name: 'list_tasks',
     title: 'List tasks',
     description:
-      'Tasks on one board, optionally filtered. Returns full task objects including every markdown field, so this can be a lot of text — use get_board for an overview and this when you need a specific slice.',
+      'Tasks on one board, optionally filtered. Returns full task objects including every markdown field, so pass `fields` — e.g. ["id", "title", "status"] — whenever you are looking up ids rather than reading the work; a filter narrows how many tasks come back, `fields` narrows what each one costs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -154,6 +200,18 @@ export const TOOLS: ToolDef[] = [
         type: { type: 'array', items: { type: 'string', enum: [...TYPES] } },
         assignee: { type: 'string' },
         label: { type: 'string', description: 'Return only tasks carrying this label.' },
+        labels: {
+          type: 'array', items: { type: 'string' },
+          description: 'Several labels at once, combined per `match`.',
+        },
+        match: {
+          type: 'string', enum: ['any', 'all'],
+          description: 'How `labels` combines: "any" (default) or "all".',
+        },
+        fields: {
+          type: 'array', items: { type: 'string' },
+          description: 'Return only these fields of each task — an index instead of the contents. Omit for whole tasks.',
+        },
       },
       required: ['project'],
     },
@@ -165,8 +223,10 @@ export const TOOLS: ToolDef[] = [
         type: a.type as never,
         assignee: str(a.assignee, 'assignee', TASK_STRING_MAX.assignee),
         label: str(a.label, 'label', LABEL_MAX),
+        labels: labels(a.labels),
+        match: oneOf(a.match, 'match', ['any', 'all']) as 'any' | 'all' | undefined,
       })
-      return JSON.stringify(tasks, null, 2)
+      return JSON.stringify(pick(tasks, a.fields), null, 2)
     },
   },
   {
@@ -175,14 +235,12 @@ export const TOOLS: ToolDef[] = [
     description: 'One task with all five markdown fields and its full work log.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: 'Task id, as returned by list_tasks or shown in the board URL.' } },
+      properties: { id: { type: 'string', description: 'Task id. A unique prefix of one — the short form in the board URL — also resolves.' } },
       required: ['id'],
     },
     handler: async a => {
-      const id = str(a.id, 'id', 64, true)!
-      const task = await getTask(id)
-      if (!task) throw new ToolError(`no such task: ${id}`)
-      return JSON.stringify({ ...task, log: await listLog(id) }, null, 2)
+      const task = await resolveTask(a.id)
+      return JSON.stringify({ ...task, log: await listLog(task.id) }, null, 2)
     },
   },
   {
@@ -198,25 +256,49 @@ export const TOOLS: ToolDef[] = [
       const p = await project(a.project)
       const patch = taskPatch(a)
       if (!patch.title?.trim()) throw new ToolError('title is required')
-      return JSON.stringify(await createTask(p.id, { ...patch, title: patch.title }), null, 2)
+      const task = await createTask(p.id, { ...patch, title: patch.title })
+      // The id, and the two things the server decided rather than the caller
+      // (which column it landed in, and whether the untriaged default
+      // applied). Not the bodies — the caller just sent those.
+      return JSON.stringify({ ok: true, id: task.id, status: task.status, labels: task.labels })
     },
   },
   {
     name: 'update_task',
     title: 'Update a task',
     description:
-      'Partial update — send only the fields you are changing. Omitted fields are left alone, so writing `result` cannot clobber a `requirement` you never read. Moving a task between columns is just status.',
+      'Partial update — send only the fields you are changing. Omitted fields are left alone, so writing `result` cannot clobber a `requirement` you never read. Moving a task between columns is just status. Pass `log` to append a work-log entry in the same call: finishing a task is one call, not two.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, ...TASK_FIELDS },
+      properties: {
+        id: { type: 'string' },
+        ...TASK_FIELDS,
+        log: {
+          type: 'string',
+          description: 'Markdown. Appended to the work log exactly as add_log would, after the fields are written.',
+        },
+        author: { type: 'string', description: 'Who is writing `log`. Defaults to "claude".' },
+      },
       required: ['id'],
     },
     handler: async a => {
-      const id = str(a.id, 'id', 64, true)!
-      if (!(await getTask(id))) throw new ToolError(`no such task: ${id}`)
+      const task = await resolveTask(a.id)
       const patch = taskPatch(a)
-      if (Object.keys(patch).length === 0) throw new ToolError('no fields to update')
-      return JSON.stringify(await updateTask(id, patch), null, 2)
+      const log = str(a.log, 'log', LOG_BODY_MAX)
+      if (Object.keys(patch).length === 0 && !log?.trim())
+        throw new ToolError('no fields to update')
+
+      // Fields first, then the log — the same order, and the same two
+      // writes, as the update_task + add_log pair this replaces. A `log`
+      // with no fields touches nothing else: the partial contract holds.
+      if (Object.keys(patch).length) await updateTask(task.id, patch)
+      if (log?.trim()) await addLog(task.id, author(a), log)
+
+      // Which fields the server understood — the one thing echoing the whole
+      // task back was incidentally good for, minus the body you just sent.
+      return JSON.stringify({
+        ok: true, id: task.id, updated: Object.keys(patch), ...(log?.trim() ? { logged: true } : {}),
+      })
     },
   },
   {
@@ -227,19 +309,20 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Task id.' },
+        id: { type: 'string', description: 'Task id, or a unique prefix of one.' },
         body: { type: 'string', description: 'Markdown.' },
         author: { type: 'string', description: 'Who is writing. Defaults to "claude".' },
       },
       required: ['id', 'body'],
     },
     handler: async a => {
-      const id = str(a.id, 'id', 64, true)!
-      if (!(await getTask(id))) throw new ToolError(`no such task: ${id}`)
+      const task = await resolveTask(a.id)
       const body = str(a.body, 'body', LOG_BODY_MAX, true)!
       if (!body.trim()) throw new ToolError('body is required')
-      const author = str(a.author, 'author', TASK_STRING_MAX.assignee) || 'claude'
-      return JSON.stringify(await addLog(id, author, body), null, 2)
+      const entry = await addLog(task.id, author(a), body)
+      // Deliberately not the entry: its body is what the caller just sent,
+      // and a thorough entry should not cost twice.
+      return JSON.stringify({ ok: true, id: entry.id, taskId: task.id })
     },
   },
 ]

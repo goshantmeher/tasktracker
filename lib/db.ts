@@ -2,7 +2,7 @@ import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwr
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
 import { generateKey, hashKey } from './keys.mjs'
-import { STATUSES, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
+import { STATUSES, DEFAULT_LABEL, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
 
 // NOTE: written against node-appwrite's `Databases` API (createDocument/
 // listDocuments/etc, documents/$id) — see scripts/setup-appwrite.mjs's own
@@ -25,7 +25,7 @@ const DEFAULT_LIST_LIMIT = 5000
 
 // Re-exported so server-side callers have one import site. Client components
 // and middleware must import these from './shared' directly instead.
-export { STATUSES, TYPES, PRIORITIES, MD_FIELDS } from './shared'
+export { STATUSES, TYPES, PRIORITIES, MD_FIELDS, DEFAULT_LABEL } from './shared'
 export type { Status, Task, TaskInput, Project, LogEntry } from './shared'
 
 // --- internal call helpers -------------------------------------------------
@@ -160,6 +160,9 @@ export type TaskFilter = {
   assignee?: string
   type?: string[]
   label?: string
+  labels?: string[]
+  /** How `labels` combines: every label ('all') or any of them ('any', default). */
+  match?: 'all' | 'any'
   limit?: number
 }
 
@@ -172,8 +175,12 @@ export async function listTasks(f: TaskFilter): Promise<Task[]> {
   // (verified against live Appwrite), but the SDK's own doc comment says
   // array attributes should use containsAny/containsAll instead, so that's
   // what this uses — the documented contract, not a coincidence that could
-  // break on a future server/SDK version.
-  if (f.label) q.push(Query.containsAny('labels', [f.label]))
+  // break on a future server/SDK version. The single `label` is just the
+  // one-element case of `labels`, so both doors share one code path and the
+  // older parameter cannot drift from the newer one.
+  const wanted = f.labels?.length ? f.labels : f.label ? [f.label] : []
+  if (wanted.length)
+    q.push(f.match === 'all' ? Query.containsAll('labels', wanted) : Query.containsAny('labels', wanted))
   q.push(Query.limit(f.limit ?? DEFAULT_LIST_LIMIT))
   const tasks = await listDocs('tasks', q, toTask)
   // Group by status in the canonical column order, ordered within each column.
@@ -183,6 +190,23 @@ export async function listTasks(f: TaskFilter): Promise<Task[]> {
 
 export async function getTask(id: string): Promise<Task | null> {
   return docById('tasks', id, toTask)
+}
+
+/**
+ * Tasks whose id starts with `prefix` — the short id from a board URL, the
+ * way git resolves a short SHA. Only ever called after an exact lookup has
+ * already missed, and it selects `title` alone so resolving an id never
+ * drags five markdown fields back with it.
+ */
+export async function findTasksByIdPrefix(
+  prefix: string, limit = 5,
+): Promise<{ id: string; title: string }[]> {
+  const res = await db().listDocuments(DB, 'tasks', [
+    Query.startsWith('$id', docId(prefix)),
+    Query.select(['title']),
+    Query.limit(limit),
+  ])
+  return res.documents.map(d => ({ id: d.$id, title: d.title as string }))
 }
 
 /** One past the last card in a column, so new tasks land at the bottom. */
@@ -211,7 +235,10 @@ export async function createTask(projectId: string, input: Partial<TaskInput> & 
     status,
     priority: input.priority ?? 'medium',
     assignee: input.assignee ?? '',
-    labels: input.labels ?? [],
+    // Defaulted, not required: a human jotting a card in the web UI must
+    // never be blocked mid-thought, but an untagged card would be invisible
+    // to every label filter. `untriaged` makes that a queue instead of a gap.
+    labels: input.labels?.length ? input.labels : [DEFAULT_LABEL],
     order: input.order ?? (await bottomOrder(projectId, status)),
   }, toTask)
 }

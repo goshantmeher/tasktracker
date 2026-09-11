@@ -63,8 +63,15 @@ try {
   // --- projects -----------------------------------------------------------
   const { body: { projects } } = await api('/api/projects')
   check('projects list returns an array', Array.isArray(projects))
-  const project = projects[0]
-  assert.ok(project, 'create at least one project in the UI before running this')
+  // TEST_PROJECT names the board this run is allowed to write to. Without
+  // it the suite writes its probe tasks into whatever project happens to be
+  // first — which on a shared instance is a real board someone is working.
+  const wanted = process.env.TEST_PROJECT
+  const project = wanted ? projects.find(p => p.slug === wanted) : projects[0]
+  assert.ok(project, wanted
+    ? `TEST_PROJECT=${wanted} does not match any project slug`
+    : 'create at least one project in the UI before running this')
+  console.log(`  · writing probe tasks to "${project.slug}"`)
 
   // --- create -------------------------------------------------------------
   const stamp = Date.now()

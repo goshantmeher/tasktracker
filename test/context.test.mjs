@@ -65,3 +65,34 @@ test('an empty board still renders a valid document', () => {
   assert.ok(out.startsWith('# Demo'))
   assert.ok(out.includes('No open tasks'))
 })
+
+// --- summary mode (what get_board serves, so it fits an MCP token cap) ------
+
+const summary = tasks =>
+  renderContext({ project: { name: 'Demo', slug: 'demo' }, tasks, summary: true })
+
+test('summary keeps Keep in mind whole — it is the part written to be read elsewhere', () => {
+  const out = summary([task({ notes: 'the orders table has no cascade' })])
+  assert.ok(out.includes('the orders table has no cascade'))
+  assert.ok(out.indexOf('Keep in mind') < out.indexOf('Open tasks'))
+})
+
+test('summary is one line per open task, with the id and the scalars', () => {
+  const out = summary([task({ title: 'Fix the cap', description: 'A LONG BODY', labels: ['ads'] })])
+  assert.ok(out.includes('- `t1` **Fix the cap** — feature · medium · ads'))
+  assert.ok(!out.includes('A LONG BODY'), 'bodies are what summary drops')
+})
+
+test('summary counts finished work instead of printing it', () => {
+  const out = summary([
+    task({ id: 'd1', status: 'done', result: 'shipped it' }),
+    task({ id: 'd2', status: 'done', result: 'shipped that too' }),
+  ])
+  assert.ok(out.includes('2 finished tasks'))
+  assert.ok(!out.includes('shipped it'))
+})
+
+test('the full briefing is unchanged — /api/context still serves bodies', () => {
+  const out = render([task({ description: 'A LONG BODY' })])
+  assert.ok(out.includes('A LONG BODY'))
+})

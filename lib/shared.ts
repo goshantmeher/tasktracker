@@ -56,6 +56,11 @@ export const LABEL_MAX = 64 // tasks.labels: string array, each element size 64
 // usable. Enforced on both doors so writing past it always gets a clear
 // rejection instead of one door silently dropping what the other wrote.
 export const LABEL_COUNT_MAX = 20
+// Every task carries at least one label, because a task with none is
+// unreachable by any label filter — it doesn't fail, it just quietly never
+// comes back. createTask applies this when a caller supplies no labels, so
+// the gap is visible on the board instead of invisible in a query.
+export const DEFAULT_LABEL = 'untriaged'
 export const LOG_BODY_MAX = 65535
 
 /**

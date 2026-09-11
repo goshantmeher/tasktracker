@@ -57,7 +57,7 @@ export async function POST(req: Request) {
         capabilities: { tools: {} },
         serverInfo: { name: 'tasktracker', title: 'Task Tracker', version: '1.0.0' },
         instructions:
-          'A kanban board shared with a human. Call get_board first for the whole picture — its "keep in mind" section carries caveats learned on other tasks. As you work, move the task with update_task and append what you tried to the work log with add_log; the human reads that stream in the UI.',
+          'A kanban board shared with a human. Call get_board first — it is an index of open work, and its "keep in mind" section carries caveats learned on other tasks; read the one task you are about to work on with get_task. As you work, move it and record what you tried in the same call: update_task(id, status, result, log). The human reads that log stream in the UI, dead ends included.',
       })
     }
 

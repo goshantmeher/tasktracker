@@ -64,6 +64,25 @@ export const DEFAULT_LABEL = 'untriaged'
 export const LOG_BODY_MAX = 65535
 
 /**
+ * Narrows each task to the requested fields — an index instead of the
+ * contents. An agent looking for an id pays for every markdown body on every
+ * match otherwise: a filter decides how many tasks come back, this decides
+ * what each one costs. Field names are checked against a real task rather
+ * than a second list of task keys kept here, so a typo is an error and this
+ * can never drift from the model. Lives here, not in either door, because
+ * /api/tasks and the MCP list_tasks must narrow identically.
+ */
+export function pickFields<T extends object>(tasks: T[], fields?: string[]): unknown[] {
+  if (!fields || tasks.length === 0) return tasks
+  const known = Object.keys(tasks[0])
+  const unknown = fields.filter(f => !known.includes(f))
+  if (unknown.length)
+    throw new Error(`unknown field(s): ${unknown.join(', ')}. Known fields: ${known.join(', ')}`)
+  return tasks.map(t =>
+    Object.fromEntries(fields.map(f => [f, (t as Record<string, unknown>)[f]])))
+}
+
+/**
  * Whitelists a raw string against an allowed set of values — the check
  * behind every `pick(name, allowed)` helper that reads a scalar enum field
  * (status/type/priority/...) off a FormData at a trust boundary, e.g.

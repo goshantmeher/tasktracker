@@ -4,7 +4,7 @@ import {
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Task, type TaskInput,
 } from '@/lib/db'
 import { renderContext } from '@/lib/context.mjs'
-import { TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX } from '@/lib/shared'
+import { TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX, pickFields } from '@/lib/shared'
 
 /**
  * The tools this tracker exposes over MCP, and the code behind them.
@@ -144,23 +144,15 @@ const TASK_FIELDS = {
 } as const
 
 /**
- * Narrows each task to the requested fields. An agent looking for an id pays
- * for every markdown body on every match otherwise — the filter decides how
- * many tasks come back, this decides what each one costs. Field names are
- * checked against a real task rather than a second list of task keys kept
- * here, so a typo is an error and this can never drift from the model.
+ * `fields` off the wire, where it can be any JSON at all. The narrowing
+ * itself is lib/shared.ts's, shared with the REST door; a plain Error from
+ * it reaches the caller as tool-error content exactly like a ToolError does.
  */
 function pick(tasks: Task[], fields: unknown): unknown[] {
   if (fields === undefined || fields === null) return tasks
   if (!Array.isArray(fields) || !fields.every(f => typeof f === 'string'))
     throw new ToolError('fields must be an array of strings')
-  if (tasks.length === 0) return tasks
-  const known = Object.keys(tasks[0])
-  const unknown = (fields as string[]).filter(f => !known.includes(f))
-  if (unknown.length)
-    throw new ToolError(`unknown field(s): ${unknown.join(', ')}. Known fields: ${known.join(', ')}`)
-  return tasks.map(t =>
-    Object.fromEntries((fields as string[]).map(f => [f, (t as unknown as Record<string, unknown>)[f]])))
+  return pickFields(tasks, fields as string[])
 }
 
 export const TOOLS: ToolDef[] = [

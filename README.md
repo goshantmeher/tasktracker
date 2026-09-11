@@ -276,7 +276,7 @@ left alone, so writing `result` cannot clobber a `requirement`.
 |---|---|---|
 | GET | `/api/context?project=<slug>` | Whole board as markdown. Start here. |
 | GET | `/api/projects` | List projects |
-| GET | `/api/tasks?project=<slug>` | Filter by `status`, `type`, `assignee`, `label`, `limit` |
+| GET | `/api/tasks?project=<slug>` | Filter by `status`, `type`, `assignee`, `label`, `labels`+`match`, `limit`; `fields` returns an index instead of full bodies |
 | POST | `/api/tasks` | Create. `project` and `title` required |
 | GET/PATCH/DELETE | `/api/tasks/<id>` | Read, partially update, or delete (also clears its log) |
 | GET/POST | `/api/tasks/<id>/log` | Read or append work log |

@@ -84,4 +84,16 @@ await ok('api_keys.createdBy', () => db.createStringAttribute(DB, 'api_keys', 'c
 await settle('api_keys')
 await ok('api_keys/hash_unique', () => db.createIndex(DB, 'api_keys', 'hash_unique', 'unique', ['hash']))
 
+await ok('checklist', () => db.createCollection(DB, 'checklist', 'checklist'))
+await ok('checklist.taskId', () => db.createStringAttribute(DB, 'checklist', 'taskId', 36, true))
+// Copied from the task so the board can read every item of a project in one
+// query instead of one per card.
+await ok('checklist.projectId', () => db.createStringAttribute(DB, 'checklist', 'projectId', 36, true))
+await ok('checklist.text', () => db.createStringAttribute(DB, 'checklist', 'text', 512, true))
+await ok('checklist.done', () => db.createBooleanAttribute(DB, 'checklist', 'done', false, false))
+await ok('checklist.order', () => db.createFloatAttribute(DB, 'checklist', 'order', true))
+await settle('checklist')
+await ok('checklist/by_task', () => db.createIndex(DB, 'checklist', 'by_task', 'key', ['taskId', 'order']))
+await ok('checklist/by_project', () => db.createIndex(DB, 'checklist', 'by_project', 'key', ['projectId']))
+
 console.log('\nschema ready')

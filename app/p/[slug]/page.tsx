@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
-import { getProjectBySlug, listTasks } from '@/lib/db'
+import { checklistProgress, getProjectBySlug, listTasks } from '@/lib/db'
 import { RefreshOnFocus } from '@/components/refresh-on-focus'
 import { AppShell, Breadcrumb } from '@/components/app-shell'
 import { Avatar } from '@/components/issue'
@@ -16,7 +16,9 @@ export default async function BoardPage({ params }: { params: Promise<{ slug: st
   // No `limit` here — listTasks's own default (5000) is the real ceiling now.
   // A hardcoded 500 would silently truncate a large project's board again,
   // exactly what raising that default was meant to stop.
-  const tasks = await listTasks({ projectId: project.id })
+  const [tasks, progress] = await Promise.all([
+    listTasks({ projectId: project.id }), checklistProgress(project.id),
+  ])
 
   // The people on the board, as a stacked avatar row. Assignees
   // come from the tasks already fetched, so this costs no extra query.
@@ -50,7 +52,7 @@ export default async function BoardPage({ params }: { params: Promise<{ slug: st
           {tasks.length} {tasks.length === 1 ? 'issue' : 'issues'}
         </span>
       </div>
-      <Board slug={slug} tasks={tasks} />
+      <Board slug={slug} tasks={tasks} progress={progress} />
     </AppShell>
   )
 }

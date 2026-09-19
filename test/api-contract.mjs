@@ -253,6 +253,53 @@ try {
     check('GET log on an unknown task id is a 404, not an empty list', missing.status === 404)
   }
 
+  // --- checklist ------------------------------------------------------------
+  {
+    const add = text => api(`/api/tasks/${id}/checklist`, { method: 'POST', body: JSON.stringify({ text }) })
+    const item = (itemId, init) => api(`/api/tasks/${id}/checklist/${itemId}`, init)
+
+    const one = await add('first')
+    const two = await add('  second  ')
+    check('POST checklist returns 201 with the new item',
+      one.status === 201 && one.body.text === 'first' && one.body.done === false)
+    check('item text is trimmed', two.body.text === 'second')
+
+    const tick = await item(two.body.id, { method: 'PATCH', body: JSON.stringify({ done: true }) })
+    check('PATCH ticks an item', tick.status === 200 && tick.body.done === true)
+
+    await item(two.body.id, { method: 'PATCH', body: JSON.stringify({ order: one.body.order - 1 }) })
+    const read = await api(`/api/tasks/${id}`)
+    check('GET task carries the checklist, in order',
+      read.body.checklist.map(i => i.text).join() === 'second,first')
+
+    const del = await item(one.body.id, { method: 'DELETE' })
+    check('DELETE removes one item',
+      del.status === 200 && (await api(`/api/tasks/${id}`)).body.checklist.length === 1)
+
+    // Refusals.
+    check('blank text is a 400', (await add('   ')).status === 400)
+    check('over-length text is a 400', (await add('x'.repeat(513))).status === 400)
+    check('a missing text is a 400', (await api(`/api/tasks/${id}/checklist`, { method: 'POST', body: '{}' })).status === 400)
+    const notBool = await item(two.body.id, { method: 'PATCH', body: JSON.stringify({ done: 'yes' }) })
+    check('a non-boolean done is a 400', notBool.status === 400)
+    const nothing = await item(two.body.id, { method: 'PATCH', body: JSON.stringify({ taskId: 'x' }) })
+    check('PATCH with no writable field is a 400', nothing.status === 400)
+
+    const other = await api('/api/tasks', {
+      method: 'POST', body: JSON.stringify({ project: project.slug, title: `checklist neighbour ${stamp}` }),
+    })
+    createdTaskIds.push(other.body.id)
+    const elsewhere = await api(`/api/tasks/${other.body.id}/checklist/${two.body.id}`, {
+      method: 'PATCH', body: JSON.stringify({ done: false }),
+    })
+    check("an item addressed through another task's URL is a 404", elsewhere.status === 404)
+
+    const missing = await api('/api/tasks/does-not-exist-checklist/checklist', {
+      method: 'POST', body: JSON.stringify({ text: 'x' }),
+    })
+    check('POST checklist on an unknown task is a 404', missing.status === 404)
+  }
+
   // --- both doors at once (Ruling 56) --------------------------------------
   // Task 8 could not prove "an API key wins over a live session cookie" with a
   // real HTTP request, because no route called resolveCaller yet. This is

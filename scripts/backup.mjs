@@ -11,7 +11,7 @@
 // with the same id, and a document created since the backup is left alone
 // (this is a restore, not a mirror — it never deletes).
 
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { readFileSync as read } from 'node:fs'
 
 for (const line of read('.env.local', 'utf8').split('\n')) {
@@ -23,7 +23,7 @@ const { Databases, Query, AppwriteException } = await import('node-appwrite')
 const { serverClient, DB } = await import('../lib/appwrite.ts')
 const db = new Databases(serverClient())
 
-const COLLECTIONS = ['projects', 'tasks', 'worklog', 'api_keys']
+const COLLECTIONS = ['projects', 'tasks', 'worklog', 'api_keys', 'checklist']
 
 /** Every document in a collection, paged — a dump that silently stops at a
  *  limit is worse than no dump at all. */
@@ -57,10 +57,16 @@ if (!mode || mode === 'dump') {
   if (!dir) throw new Error('restore needs a backup directory')
   const write = flags.includes('--write')
   for (const c of COLLECTIONS) {
+    // Backups taken before a collection existed simply don't have its file.
+    if (!existsSync(`${dir}/${c}.json`)) { console.log(`${c}: not in this backup, skipped`); continue }
     const docs = JSON.parse(readFileSync(`${dir}/${c}.json`, 'utf8'))
     let updated = 0, recreated = 0
     for (const doc of docs) {
       if (!write) continue
+      // A blank/missing $id collapses updateDocument's path to the collection
+      // endpoint, which Appwrite treats as "update every row" — see docId's
+      // comment in lib/db.ts for the same trap on the write side.
+      if (!doc.$id) continue
       try {
         await db.updateDocument(DB, c, doc.$id, fields(doc))
         updated++

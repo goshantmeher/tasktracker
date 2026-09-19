@@ -6,10 +6,12 @@ import { currentUser } from '@/lib/auth'
 import {
   createTask, updateTask, getProjectBySlug, getTask, addLog,
   deleteTask, listLog, deleteLog,
+  getChecklistItem, addChecklistItems, updateChecklistItem, deleteChecklistItem, deleteChecklist,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Status, type TaskInput,
 } from '@/lib/db'
 import {
   isAllowed, resolveAuthor, TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX,
+  checklistText, type ChecklistItem,
 } from '@/lib/shared'
 
 /**
@@ -189,4 +191,59 @@ export async function addLogEntry(slug: string, taskId: string, formData: FormDa
   if (!body) return
   await addLog(taskId, resolveAuthor(user.name, user.email), body)
   revalidatePath(`/p/${slug}/t/${taskId}`)
+}
+
+// --- checklist ---------------------------------------------------------------
+// Same guards as the task actions above: a signed-in user, and a task that
+// belongs to the slug. Items get one more — the item must belong to the task
+// — since itemId arrives from the client independently of both.
+
+async function ownedItem(slug: string, taskId: string, itemId: string) {
+  await ownedTask(slug, taskId)
+  const item = await getChecklistItem(itemId)
+  if (!item || item.taskId !== taskId) throw new Error('no such checklist item')
+  return item
+}
+
+/** The task page, and the board whose card shows the progress bar. */
+function revalidateTask(slug: string, taskId: string) {
+  revalidatePath(`/p/${slug}/t/${taskId}`)
+  revalidatePath(`/p/${slug}`)
+}
+
+export async function addChecklistItem(slug: string, taskId: string, text: string) {
+  await requireUser()
+  const task = await ownedTask(slug, taskId)
+  await addChecklistItems(task, [checklistText(text)])
+  revalidateTask(slug, taskId)
+}
+
+export async function editChecklistItem(
+  slug: string, taskId: string, itemId: string,
+  patch: { text?: string; done?: boolean; order?: number },
+) {
+  await requireUser()
+  await ownedItem(slug, taskId, itemId)
+  // Rebuilt field by field, not passed through — `patch` is client input.
+  const clean: Partial<Pick<ChecklistItem, 'text' | 'done' | 'order'>> = {}
+  if (patch.text !== undefined) clean.text = checklistText(patch.text)
+  if (typeof patch.done === 'boolean') clean.done = patch.done
+  if (typeof patch.order === 'number' && Number.isFinite(patch.order)) clean.order = patch.order
+  if (Object.keys(clean).length === 0) throw new Error('nothing to save')
+  await updateChecklistItem(itemId, clean)
+  revalidateTask(slug, taskId)
+}
+
+export async function removeChecklistItem(slug: string, taskId: string, itemId: string) {
+  await requireUser()
+  await ownedItem(slug, taskId, itemId)
+  await deleteChecklistItem(itemId)
+  revalidateTask(slug, taskId)
+}
+
+export async function clearChecklist(slug: string, taskId: string) {
+  await requireUser()
+  await ownedTask(slug, taskId)
+  await deleteChecklist(taskId)
+  revalidateTask(slug, taskId)
 }

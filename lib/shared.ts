@@ -108,3 +108,29 @@ export function isAllowed<T extends readonly string[]>(v: string, allowed: T): v
 export function resolveAuthor(name: string, email: string): string {
   return name || email || 'Unknown'
 }
+
+export type ChecklistItem = { id: string; taskId: string; text: string; done: boolean; order: number }
+export type ChecklistProgress = { done: number; total: number }
+
+// checklist.text's declared column size (scripts/setup-appwrite.mjs), and an
+// app-level cap on items per task so the list stays usable. Enforced the
+// same on every door.
+export const CHECKLIST_TEXT_MAX = 512
+export const CHECKLIST_COUNT_MAX = 100
+
+/**
+ * A limit the caller broke, as opposed to something going wrong. The REST
+ * door turns it into a 400 and lets every other error stay a 500, so an
+ * Appwrite outage is never reported as the caller's fault.
+ */
+export class LimitError extends Error {}
+
+/** Item text, trimmed — or a LimitError saying why it can't be one. */
+export function checklistText(v: unknown): string {
+  if (typeof v !== 'string') throw new LimitError('checklist item text must be a string')
+  const t = v.trim()
+  if (!t) throw new LimitError('checklist item text is required')
+  if (t.length > CHECKLIST_TEXT_MAX)
+    throw new LimitError(`checklist item text must be at most ${CHECKLIST_TEXT_MAX} characters`)
+  return t
+}

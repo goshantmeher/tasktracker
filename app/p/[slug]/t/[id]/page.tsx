@@ -1,8 +1,10 @@
+import { Fragment } from 'react'
 import { notFound, redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth'
-import { getTask, listLog, getProjectBySlug } from '@/lib/db'
+import { getTask, listLog, listChecklist, getProjectBySlug } from '@/lib/db'
 import { addLogEntry } from '../../actions'
 import { MarkdownField, ScalarForm } from './detail'
+import { Checklist } from './checklist'
 import { DeleteTask } from './delete-task'
 import { Markdown } from '@/components/markdown'
 import { RefreshOnFocus } from '@/components/refresh-on-focus'
@@ -28,8 +30,8 @@ export default async function TaskPage(
   // only the fetching moved. Cost of getting this wrong is small and known:
   // a request with a stale cookie now does three reads before its redirect,
   // where it used to do none. There is no ownership model to leak through.
-  const [user, project, task, log] = await Promise.all([
-    currentUser(), getProjectBySlug(slug), getTask(id), listLog(id),
+  const [user, project, task, log, checklist] = await Promise.all([
+    currentUser(), getProjectBySlug(slug), getTask(id), listLog(id), listChecklist(id),
   ])
   if (!user) redirect('/login')
   if (!project) notFound()
@@ -59,7 +61,7 @@ export default async function TaskPage(
           {key}
         </div>
         <div className="mb-5 flex items-start gap-4">
-          <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">{task.title}</h1>
+          <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{task.title}</h1>
           <DeleteTask slug={slug} taskId={task.id} title={task.title} />
         </div>
 
@@ -69,8 +71,12 @@ export default async function TaskPage(
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
           <div className="min-w-0 flex-1">
             {FIELDS.map(([field, label]) => (
-              <MarkdownField key={field} slug={slug} taskId={task.id}
-                field={field} label={label} value={task[field as keyof typeof task] as string} />
+              <Fragment key={field}>
+                <MarkdownField slug={slug} taskId={task.id}
+                  field={field} label={label} value={task[field as keyof typeof task] as string} />
+                {/* Right under Description: the checklist is part of what the task is. */}
+                {field === 'description' && <Checklist slug={slug} taskId={task.id} items={checklist} />}
+              </Fragment>
             ))}
 
             <section className="mt-8 border-t border-tt-border pt-5">

@@ -1,10 +1,14 @@
 import {
   listProjects, getProjectBySlug, listTasks, getTask, findTasksByIdPrefix,
   createTask, updateTask, addLog, listLog,
+  listChecklist, addChecklistItems, updateChecklistItem, deleteChecklistItem,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type Task, type TaskInput,
 } from '@/lib/db'
 import { renderContext } from '@/lib/context.mjs'
-import { TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX, pickFields } from '@/lib/shared'
+import {
+  TASK_STRING_MAX, LABEL_MAX, LABEL_COUNT_MAX, LOG_BODY_MAX, pickFields,
+  checklistText, CHECKLIST_COUNT_MAX,
+} from '@/lib/shared'
 
 /**
  * The tools this tracker exposes over MCP, and the code behind them.
@@ -56,6 +60,22 @@ const labels = (v: unknown): string[] | undefined => {
     throw new ToolError(`labels must have at most ${LABEL_COUNT_MAX} entries`)
   if (!v.every(s => typeof s === 'string' && s.length <= LABEL_MAX))
     throw new ToolError(`each label must be a string of at most ${LABEL_MAX} characters`)
+  return v as string[]
+}
+
+/** Item texts off the wire, all validated before anything is written. */
+const itemTexts = (v: unknown, field: string): string[] => {
+  if (v === undefined || v === null) return []
+  if (!Array.isArray(v)) throw new ToolError(`${field} must be an array of strings`)
+  if (v.length > CHECKLIST_COUNT_MAX)
+    throw new ToolError(`${field} must have at most ${CHECKLIST_COUNT_MAX} entries`)
+  return v.map(checklistText)
+}
+
+const itemIds = (v: unknown, field: string): string[] => {
+  if (v === undefined || v === null) return []
+  if (!Array.isArray(v) || !v.every(s => typeof s === 'string'))
+    throw new ToolError(`${field} must be an array of item ids`)
   return v as string[]
 }
 
@@ -232,7 +252,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'get_task',
     title: 'Read one task',
-    description: 'One task with all five markdown fields and its full work log.',
+    description: 'One task with all five markdown fields, its checklist and its full work log.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'Task id. A unique prefix of one — the short form in the board URL — also resolves.' } },
@@ -240,7 +260,12 @@ export const TOOLS: ToolDef[] = [
     },
     handler: async a => {
       const task = await resolveTask(a.id)
-      return JSON.stringify({ ...task, log: await listLog(task.id) }, null, 2)
+      const [checklist, log] = await Promise.all([listChecklist(task.id), listLog(task.id)])
+      // id/text/done only: taskId repeats the task, and order is the
+      // array's own order.
+      return JSON.stringify({
+        ...task, checklist: checklist.map(({ id, text, done }) => ({ id, text, done })), log,
+      }, null, 2)
     },
   },
   {
@@ -249,18 +274,32 @@ export const TOOLS: ToolDef[] = [
     description: 'Adds a task to the bottom of its column. Only project and title are required.',
     inputSchema: {
       type: 'object',
-      properties: { project: { type: 'string' }, ...TASK_FIELDS },
+      properties: {
+        project: { type: 'string' },
+        ...TASK_FIELDS,
+        checklist: {
+          type: 'array', items: { type: 'string' },
+          description: 'Checklist items to start the task with, in order. Change them later with update_checklist.',
+        },
+      },
       required: ['project', 'title'],
     },
     handler: async a => {
       const p = await project(a.project)
       const patch = taskPatch(a)
       if (!patch.title?.trim()) throw new ToolError('title is required')
+      // Validated before the task exists, so a bad item never leaves a
+      // half-made task behind.
+      const items = itemTexts(a.checklist, 'checklist')
       const task = await createTask(p.id, { ...patch, title: patch.title })
+      if (items.length) await addChecklistItems(task, items)
       // The id, and the two things the server decided rather than the caller
       // (which column it landed in, and whether the untriaged default
       // applied). Not the bodies — the caller just sent those.
-      return JSON.stringify({ ok: true, id: task.id, status: task.status, labels: task.labels })
+      return JSON.stringify({
+        ok: true, id: task.id, status: task.status, labels: task.labels,
+        ...(items.length ? { checklist: items.length } : {}),
+      })
     },
   },
   {
@@ -298,6 +337,53 @@ export const TOOLS: ToolDef[] = [
       // task back was incidentally good for, minus the body you just sent.
       return JSON.stringify({
         ok: true, id: task.id, updated: Object.keys(patch), ...(log?.trim() ? { logged: true } : {}),
+      })
+    },
+  },
+  {
+    name: 'update_checklist',
+    title: "Change a task's checklist",
+    description:
+      'Add, tick, untick or remove checklist items in one call — tick items off as you finish them so the human sees progress on the board. Item ids come from get_task. Applied in the order remove, check, uncheck, add; new items go to the bottom. Returns the done/total counts and the ids of added items, not the list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Task id, or a unique prefix of one.' },
+        add: { type: 'array', items: { type: 'string' }, description: 'Texts of new items.' },
+        check: { type: 'array', items: { type: 'string' }, description: 'Item ids to mark done.' },
+        uncheck: { type: 'array', items: { type: 'string' }, description: 'Item ids to mark not done.' },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Item ids to delete.' },
+      },
+      required: ['id'],
+    },
+    handler: async a => {
+      const task = await resolveTask(a.id)
+      const add = itemTexts(a.add, 'add')
+      const check = itemIds(a.check, 'check')
+      const uncheck = itemIds(a.uncheck, 'uncheck')
+      const remove = itemIds(a.remove, 'remove')
+      if (!add.length && !check.length && !uncheck.length && !remove.length)
+        throw new ToolError('nothing to change: pass add, check, uncheck or remove')
+
+      // Everything is checked before the first write, so a bad call changes
+      // nothing rather than half of what it asked for.
+      const own = new Set((await listChecklist(task.id)).map(i => i.id))
+      const stray = [...check, ...uncheck, ...remove].filter(i => !own.has(i))
+      if (stray.length) throw new ToolError(`not items of task ${task.id}: ${stray.join(', ')}`)
+      const removed = new Set(remove)
+      if (own.size - removed.size + add.length > CHECKLIST_COUNT_MAX)
+        throw new ToolError(`a checklist holds at most ${CHECKLIST_COUNT_MAX} items (this one has ${own.size})`)
+
+      for (const i of removed) await deleteChecklistItem(i)
+      for (const i of check) if (!removed.has(i)) await updateChecklistItem(i, { done: true })
+      for (const i of uncheck) if (!removed.has(i)) await updateChecklistItem(i, { done: false })
+      const added = add.length ? await addChecklistItems(task, add) : []
+
+      const items = await listChecklist(task.id)
+      return JSON.stringify({
+        ok: true, id: task.id,
+        done: items.filter(i => i.done).length, total: items.length,
+        added: added.map(i => i.id),
       })
     },
   },

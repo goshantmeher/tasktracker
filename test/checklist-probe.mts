@@ -19,6 +19,15 @@ const {
 } = await import('../lib/db')
 const { LimitError } = await import('../lib/shared')
 const { orderBetween } = await import('../lib/order.mjs')
+const { callTool } = await import('../app/api/mcp/tools')
+
+/** One tool call, unwrapped: parsed JSON, or the error text. */
+async function call(name: string, args: Record<string, unknown>) {
+  const res = await callTool(name, args)
+  const text = (res.content[0] as { text: string }).text
+  if (res.isError) return { error: text, value: undefined }
+  return { value: JSON.parse(text), error: undefined }
+}
 
 const project = (await getProjectBySlug('scratch')) ?? (await createProject('Scratch'))
 assert.equal(project.slug, 'scratch', 'this probe writes to scratch and nowhere else')
@@ -66,6 +75,50 @@ try {
   created.splice(created.indexOf(task.id), 1)
   ok('deleting a task deletes its items',
     (await Promise.all(ids.map(getChecklistItem))).every(i => i === null))
+
+  // --- MCP: happy path ------------------------------------------------------
+  const made = await call('create_task', {
+    project: 'scratch', title: 'probe: checklist over MCP', checklist: ['plan', 'build', 'ship'],
+  })
+  assert.ok(!made.error, `create_task failed: ${made.error}`)
+  created.push(made.value.id)
+  ok('create_task reports how many items it created', made.value.checklist === 3)
+
+  const got = await call('get_task', { id: made.value.id })
+  ok('get_task returns the checklist in order, as id/text/done only',
+    got.value.checklist.map((i: { text: string }) => i.text).join() === 'plan,build,ship'
+    && Object.keys(got.value.checklist[0]).join() === 'id,text,done')
+
+  const [plan, build, ship] = got.value.checklist
+  const batch = await call('update_checklist', {
+    id: made.value.id, check: [plan.id, build.id], remove: [ship.id], add: ['verify'],
+  })
+  ok('update_checklist applies a batch and answers with counts, not the list',
+    batch.value.done === 2 && batch.value.total === 3 && batch.value.added.length === 1
+    && !JSON.stringify(batch.value).includes('plan'))
+
+  const undone = await call('update_checklist', { id: made.value.id, uncheck: [plan.id] })
+  ok('uncheck clears done', undone.value.done === 1)
+
+  // --- MCP: refusals --------------------------------------------------------
+  const stray = await call('update_checklist', { id: made.value.id, check: ['not-an-item'] })
+  ok('an id that is not an item of this task is refused', stray.error?.includes('not items of task'))
+
+  const blank = await call('update_checklist', { id: made.value.id, add: ['   '] })
+  ok('blank item text is refused', blank.error?.includes('required'))
+
+  const empty = await call('update_checklist', { id: made.value.id })
+  ok('a call that changes nothing is refused', empty.error?.includes('nothing to change'))
+
+  const full = await call('update_checklist', { id: made.value.id, add: Array(98).fill('x') })
+  ok('going past 100 items is refused before anything is written',
+    full.error?.includes('at most 100') && (await listChecklist(made.value.id)).length === 3)
+
+  const badCreate = await call('create_task', {
+    project: 'scratch', title: 'probe: must not exist', checklist: ['ok', 'y'.repeat(513)],
+  })
+  ok('create_task with a bad item fails before creating the task',
+    badCreate.error?.includes('at most 512'))
 } finally {
   for (const id of created) {
     try { await deleteTask(id) } catch (e) { console.error('  ! cleanup failed for', id, e) }

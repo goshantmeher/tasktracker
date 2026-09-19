@@ -59,7 +59,7 @@ export default async function TaskPage(
           {key}
         </div>
         <div className="mb-5 flex items-start gap-4">
-          <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight">{task.title}</h1>
+          <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{task.title}</h1>
           <DeleteTask slug={slug} taskId={task.id} title={task.title} />
         </div>
 

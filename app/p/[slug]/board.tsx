@@ -152,7 +152,8 @@ export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
                 >
                   <Link
                     href={`/p/${slug}/t/${t.id}`}
-                    className="mb-2 block text-sm leading-5 hover:text-tt-blue hover:underline"
+                    title={t.title}
+                    className="mb-2 block truncate text-sm leading-5 hover:text-tt-blue hover:underline"
                   >
                     {t.title}
                   </Link>

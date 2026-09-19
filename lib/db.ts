@@ -2,7 +2,11 @@ import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwr
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
 import { generateKey, hashKey } from './keys.mjs'
-import { STATUSES, DEFAULT_LABEL, type Status, type Task, type TaskInput, type Project, type LogEntry } from './shared'
+import {
+  STATUSES, DEFAULT_LABEL, CHECKLIST_COUNT_MAX, LimitError,
+  type Status, type Task, type TaskInput, type Project, type LogEntry,
+  type ChecklistItem, type ChecklistProgress,
+} from './shared'
 
 // NOTE: written against node-appwrite's `Databases` API (createDocument/
 // listDocuments/etc, documents/$id) — see scripts/setup-appwrite.mjs's own
@@ -26,7 +30,7 @@ const DEFAULT_LIST_LIMIT = 5000
 // Re-exported so server-side callers have one import site. Client components
 // and middleware must import these from './shared' directly instead.
 export { STATUSES, TYPES, PRIORITIES, MD_FIELDS, DEFAULT_LABEL } from './shared'
-export type { Status, Task, TaskInput, Project, LogEntry } from './shared'
+export type { Status, Task, TaskInput, Project, LogEntry, ChecklistItem, ChecklistProgress } from './shared'
 
 // --- internal call helpers -------------------------------------------------
 // The three repeated shapes behind every function below: list+map,
@@ -261,8 +265,11 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
 // A real delete, reachable from both front doors (DELETE /api/tasks/:id and
 // the detail page's Delete button). The worklog is append-only *per task* —
 // nothing edits an entry — but a deleted task's entries are unreachable
-// garbage, so both callers clear them first via deleteLog.
+// garbage, so both callers clear them first via deleteLog. Checklist items
+// are cleared here instead, so no caller (the contract suite's cleanup
+// included) can forget them.
 export async function deleteTask(id: string): Promise<void> {
+  await deleteChecklist(id)
   await db().deleteDocument(DB, 'tasks', docId(id))
 }
 
@@ -328,6 +335,91 @@ export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<M
 // Mirrors deleteTask/deleteProject above, added for the same reason.
 export async function deleteLog(id: string): Promise<void> {
   await db().deleteDocument(DB, 'worklog', docId(id))
+}
+
+// --- checklist ---------------------------------------------------------------
+// One document per item, not an array on the task: a tick is a write to one
+// item, so a human and an agent ticking different items at once both land.
+
+const toItem = (d: Models.DefaultDocument): ChecklistItem => ({
+  id: d.$id,
+  taskId: d.taskId as string,
+  text: d.text as string,
+  done: Boolean(d.done),
+  order: d.order as number,
+})
+
+export async function listChecklist(taskId: string): Promise<ChecklistItem[]> {
+  return listDocs('checklist', [
+    Query.equal('taskId', docId(taskId)),
+    Query.orderAsc('order'),
+    Query.limit(DEFAULT_LIST_LIMIT),
+  ], toItem)
+}
+
+export async function getChecklistItem(id: string): Promise<ChecklistItem | null> {
+  return docById('checklist', id, toItem)
+}
+
+/**
+ * Appends at the bottom, in the order given. The whole batch is refused
+ * before anything is written if it would take the list past the cap.
+ * ponytail: the count is read, then written — two writers adding at the same
+ * moment can land a few items past the cap. Harmless at this scale; a
+ * counter on the task would close it.
+ */
+export async function addChecklistItems(
+  task: { id: string; projectId: string }, texts: string[],
+): Promise<ChecklistItem[]> {
+  const items = await listChecklist(task.id)
+  if (items.length + texts.length > CHECKLIST_COUNT_MAX)
+    throw new LimitError(
+      `a checklist holds at most ${CHECKLIST_COUNT_MAX} items (this one has ${items.length})`)
+  let order: number | null = items.length ? items[items.length - 1].order : null
+  const added: ChecklistItem[] = []
+  for (const text of texts) {
+    order = orderBetween(order, null)
+    added.push(await insertDoc('checklist',
+      { taskId: task.id, projectId: task.projectId, text, done: false, order }, toItem))
+  }
+  return added
+}
+
+/** Partial, like updateTask: only the keys present are sent. */
+export async function updateChecklistItem(
+  id: string, patch: Partial<Pick<ChecklistItem, 'text' | 'done' | 'order'>>,
+): Promise<ChecklistItem> {
+  const body: Record<string, unknown> = {}
+  for (const k of ['text', 'done', 'order'] as const) if (k in patch) body[k] = patch[k]
+  return patchDoc('checklist', id, body, toItem)
+}
+
+export async function deleteChecklistItem(id: string): Promise<void> {
+  await db().deleteDocument(DB, 'checklist', docId(id))
+}
+
+/** One by one, never Appwrite's bulk delete — see docId for why. */
+export async function deleteChecklist(taskId: string): Promise<void> {
+  for (const item of await listChecklist(taskId)) await deleteChecklistItem(item.id)
+}
+
+/**
+ * Done/total per task for a whole board, from one query that reads two
+ * small fields. Tasks without a checklist are simply absent.
+ */
+export async function checklistProgress(projectId: string): Promise<Record<string, ChecklistProgress>> {
+  const res = await db().listDocuments(DB, 'checklist', [
+    Query.equal('projectId', docId(projectId)),
+    Query.select(['taskId', 'done']),
+    Query.limit(DEFAULT_LIST_LIMIT),
+  ])
+  const out: Record<string, ChecklistProgress> = {}
+  for (const d of res.documents) {
+    const p = (out[d.taskId as string] ??= { done: 0, total: 0 })
+    p.total++
+    if (d.done) p.done++
+  }
+  return out
 }
 
 // --- API keys ---------------------------------------------------------------

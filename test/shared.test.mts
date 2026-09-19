@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isAllowed, STATUSES, resolveAuthor } from '../lib/shared'
+import { isAllowed, STATUSES, resolveAuthor, checklistText, LimitError, CHECKLIST_TEXT_MAX } from '../lib/shared'
 
 // This is the status-whitelist check behind app/p/[slug]/actions.ts's
 // quickAddTask (and, per Task 6's brief, saveScalars): the guard against a
@@ -38,4 +38,18 @@ test('resolveAuthor: an empty name falls back to email', () => {
 
 test('resolveAuthor: empty name AND empty email falls back to the fixed literal', () => {
   assert.equal(resolveAuthor('', ''), 'Unknown')
+})
+
+// The one validator every door (MCP, REST, server actions) runs item text
+// through, so they cannot disagree on what a valid item is.
+test('checklistText: trims and accepts ordinary text', () => {
+  assert.equal(checklistText('  write the test  '), 'write the test')
+})
+
+test('checklistText: refuses blank, non-string and over-length text', () => {
+  assert.throws(() => checklistText('   '), LimitError)
+  assert.throws(() => checklistText(42), LimitError)
+  assert.throws(() => checklistText(undefined), LimitError)
+  assert.throws(() => checklistText('x'.repeat(CHECKLIST_TEXT_MAX + 1)), LimitError)
+  assert.equal(checklistText('x'.repeat(CHECKLIST_TEXT_MAX)).length, CHECKLIST_TEXT_MAX)
 })

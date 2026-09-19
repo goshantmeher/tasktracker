@@ -1,6 +1,6 @@
 import { requireCaller, isResponse, json, bad, checkStringField, TASK_STRING_MAX, checkLabels, checkOrder } from '../../_util'
 import {
-  getTask, updateTask, deleteTask, listLog, deleteLog,
+  getTask, updateTask, deleteTask, listLog, deleteLog, listChecklist,
   STATUSES, TYPES, PRIORITIES, MD_FIELDS, type TaskInput,
 } from '@/lib/db'
 
@@ -49,13 +49,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const caller = await requireCaller(req)
   if (isResponse(caller)) return caller
   const task = await getTask((await ctx.params).id)
-  return task ? json(task) : bad('no such task', 404)
+  return task ? json({ ...task, checklist: await listChecklist(task.id) }) : bad('no such task', 404)
 }
 
 /**
- * Deletes the task and its work log entries. The log is cleared first: its
- * rows are only reachable through their taskId, so a task removed while
- * they remain leaves rows nothing can ever read or remove.
+ * Deletes the task, its checklist (deleteTask does that itself) and its work
+ * log entries. The log is cleared first: its rows are only reachable through
+ * their taskId, so a task removed while they remain leaves rows nothing can
+ * ever read or remove.
  */
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const caller = await requireCaller(req)

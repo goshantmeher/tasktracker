@@ -63,6 +63,10 @@ if (!mode || mode === 'dump') {
     let updated = 0, recreated = 0
     for (const doc of docs) {
       if (!write) continue
+      // A blank/missing $id collapses updateDocument's path to the collection
+      // endpoint, which Appwrite treats as "update every row" — see docId's
+      // comment in lib/db.ts for the same trap on the write side.
+      if (!doc.$id) continue
       try {
         await db.updateDocument(DB, c, doc.$id, fields(doc))
         updated++

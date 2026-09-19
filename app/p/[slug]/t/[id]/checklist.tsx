@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { nextOrder } from '@/lib/order.mjs'
 // From '@/lib/shared', never '@/lib/db' — this is a client component.
 import { CHECKLIST_TEXT_MAX, type ChecklistItem } from '@/lib/shared'
@@ -25,8 +26,15 @@ export function Checklist({ slug, taskId, items: saved }: {
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [pending, start] = useTransition()
+  const router = useRouter()
 
-  /** Show `next` now, save, and put the old list back if the save fails. */
+  /**
+   * Show `next` now, save, and put the old list back if the save fails.
+   * Two ticks in flight at once can fail in either order; whichever restore
+   * runs last would otherwise win with a stale snapshot that re-applies the
+   * other one's optimistic change. router.refresh() pulls server truth back
+   * in on top of that restore instead of trusting it.
+   */
   function apply(next: ChecklistItem[], save: () => Promise<void>) {
     const before = items
     setItems(next)
@@ -35,6 +43,7 @@ export function Checklist({ slug, taskId, items: saved }: {
       try { await save() } catch (e) {
         setItems(before)
         setError(e instanceof Error ? e.message : 'save failed')
+        router.refresh()
       }
     })
   }
@@ -118,6 +127,7 @@ export function Checklist({ slug, taskId, items: saved }: {
             onRemove={() => apply(items.filter(i => i.id !== item.id),
               () => removeChecklistItem(slug, taskId, item.id))}
             onDragStart={() => setDragging(item.id)}
+            onDragEnd={() => setDragging(null)}
             onDrop={() => drop(item.id)}
           />
         ))}
@@ -136,12 +146,13 @@ export function Checklist({ slug, taskId, items: saved }: {
   )
 }
 
-function ItemRow({ item, onToggle, onRename, onRemove, onDragStart, onDrop }: {
+function ItemRow({ item, onToggle, onRename, onRemove, onDragStart, onDragEnd, onDrop }: {
   item: ChecklistItem
   onToggle: () => void
   onRename: (text: string) => void
   onRemove: () => void
   onDragStart: () => void
+  onDragEnd: () => void
   onDrop: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -159,6 +170,7 @@ function ItemRow({ item, onToggle, onRename, onRemove, onDragStart, onDrop }: {
     <li
       draggable={!editing}
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onDragOver={e => e.preventDefault()}
       onDrop={e => { e.preventDefault(); onDrop() }}
       className="group flex items-center gap-2 rounded-[3px] px-1 py-1 hover:bg-tt-hover"

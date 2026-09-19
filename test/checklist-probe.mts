@@ -13,7 +13,7 @@ for (const l of readFileSync('.env.local', 'utf8').split('\n')) {
 }
 
 const {
-  getProjectBySlug, createProject, createTask, deleteTask,
+  getProjectBySlug, createProject, createTask, deleteTask, listTasks,
   listChecklist, getChecklistItem, addChecklistItems, updateChecklistItem,
   deleteChecklistItem, checklistProgress,
 } = await import('../lib/db')
@@ -104,6 +104,10 @@ try {
   const stray = await call('update_checklist', { id: made.value.id, check: ['not-an-item'] })
   ok('an id that is not an item of this task is refused', stray.error?.includes('not items of task'))
 
+  const conflicting = await call('update_checklist', { id: made.value.id, check: [plan.id], uncheck: [plan.id] })
+  ok('the same id in both check and uncheck is refused',
+    conflicting.error?.includes('is in both check and uncheck'))
+
   const blank = await call('update_checklist', { id: made.value.id, add: ['   '] })
   ok('blank item text is refused', blank.error?.includes('required'))
 
@@ -114,11 +118,15 @@ try {
   ok('going past 100 items is refused before anything is written',
     full.error?.includes('at most 100') && (await listChecklist(made.value.id)).length === 3)
 
+  const badTitle = 'probe: must not exist'
   const badCreate = await call('create_task', {
-    project: 'scratch', title: 'probe: must not exist', checklist: ['ok', 'y'.repeat(513)],
+    project: 'scratch', title: badTitle, checklist: ['ok', 'y'.repeat(513)],
   })
   ok('create_task with a bad item fails before creating the task',
     badCreate.error?.includes('at most 512'))
+  const scratchTasks = await listTasks({ projectId: project.id })
+  ok('no task was created for the failed call',
+    !scratchTasks.some(t => t.title === badTitle))
 } finally {
   for (const id of created) {
     try { await deleteTask(id) } catch (e) { console.error('  ! cleanup failed for', id, e) }

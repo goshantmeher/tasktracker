@@ -405,21 +405,31 @@ export async function deleteChecklist(taskId: string): Promise<void> {
 
 /**
  * Done/total per task for a whole board, from one query that reads two
- * small fields. Tasks without a checklist are simply absent.
+ * small fields. Tasks without a checklist are simply absent. Paged the same
+ * way scripts/backup.mjs's readAll pages a whole collection: a project with
+ * more than one page of items must still be counted in full.
  */
 export async function checklistProgress(projectId: string): Promise<Record<string, ChecklistProgress>> {
-  const res = await db().listDocuments(DB, 'checklist', [
-    Query.equal('projectId', docId(projectId)),
-    Query.select(['taskId', 'done']),
-    Query.limit(DEFAULT_LIST_LIMIT),
-  ])
   const out: Record<string, ChecklistProgress> = {}
-  for (const d of res.documents) {
-    const p = (out[d.taskId as string] ??= { done: 0, total: 0 })
-    p.total++
-    if (d.done) p.done++
+  let cursor: string | null = null
+  for (;;) {
+    // Annotated: reading `cursor` here and writing it from `res` below, both
+    // in the same loop, is circular enough to trip tsc's inference of a
+    // generic call's default type parameter (TS7022) without this.
+    const res: Models.DocumentList<Models.DefaultDocument> = await db().listDocuments(DB, 'checklist', [
+      Query.equal('projectId', docId(projectId)),
+      Query.select(['taskId', 'done']),
+      Query.limit(DEFAULT_LIST_LIMIT),
+      ...(cursor ? [Query.cursorAfter(cursor)] : []),
+    ])
+    for (const d of res.documents) {
+      const p = (out[d.taskId as string] ??= { done: 0, total: 0 })
+      p.total++
+      if (d.done) p.done++
+    }
+    if (res.documents.length < DEFAULT_LIST_LIMIT) return out
+    cursor = res.documents[res.documents.length - 1].$id
   }
-  return out
 }
 
 // --- API keys ---------------------------------------------------------------

@@ -365,11 +365,14 @@ export const TOOLS: ToolDef[] = [
       if (!add.length && !check.length && !uncheck.length && !remove.length)
         throw new ToolError('nothing to change: pass add, check, uncheck or remove')
 
-      // Everything is checked before the first write, so a bad call changes
-      // nothing rather than half of what it asked for.
+      // Everything is checked before the first write, so a call that fails
+      // this validation changes nothing — though an Appwrite failure partway
+      // through the writes below can still leave the batch half-applied.
       const own = new Set((await listChecklist(task.id)).map(i => i.id))
       const stray = [...check, ...uncheck, ...remove].filter(i => !own.has(i))
       if (stray.length) throw new ToolError(`not items of task ${task.id}: ${stray.join(', ')}`)
+      const both = check.find(i => uncheck.includes(i))
+      if (both) throw new ToolError(`${both} is in both check and uncheck`)
       const removed = new Set(remove)
       if (own.size - removed.size + add.length > CHECKLIST_COUNT_MAX)
         throw new ToolError(`a checklist holds at most ${CHECKLIST_COUNT_MAX} items (this one has ${own.size})`)

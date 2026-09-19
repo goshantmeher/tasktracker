@@ -45,9 +45,10 @@ Type in `lib/shared.ts`:
 - `addChecklistItems(task, texts[])` — appends at the bottom, in order.
 - `updateChecklistItem(id, { text?, done?, order? })` — partial, via `patchDoc`.
 - `deleteChecklistItem(id)`.
-- `deleteChecklist(taskId)` — every item of a task. Called by "Delete" and
-  by both task-delete paths (`removeTask` action, `DELETE /api/tasks/:id`),
-  next to the existing log cleanup.
+- `deleteChecklist(taskId)` — every item of a task, one by one. Called by
+  "Delete", and by `deleteTask` itself, so every task-delete path (the
+  `removeTask` action, `DELETE /api/tasks/:id`, test cleanup) clears items
+  without having to remember to.
 
 All ids go through the existing `docId` guard.
 

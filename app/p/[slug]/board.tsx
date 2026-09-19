@@ -5,7 +5,7 @@ import { useOptimistic, useTransition, useState, type FormEvent } from 'react'
 import { nextOrder } from '@/lib/order.mjs'
 // From '@/lib/shared', never '@/lib/db' — this is a client component, and
 // lib/db imports node-appwrite. See Task 11 Step 6, which verifies this.
-import { STATUSES, TASK_STRING_MAX, type Status, type Task } from '@/lib/shared'
+import { STATUSES, TASK_STRING_MAX, type ChecklistProgress, type Status, type Task } from '@/lib/shared'
 import { moveTask, quickAddTask } from './actions'
 import { TypeIcon, PriorityIcon, Avatar, issueKey } from '@/components/issue'
 
@@ -81,7 +81,9 @@ function QuickAdd({ slug, status }: { slug: string; status: Status }) {
   )
 }
 
-export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
+export function Board({ slug, tasks, progress }: {
+  slug: string; tasks: Task[]; progress: Record<string, ChecklistProgress>
+}) {
   const [, startTransition] = useTransition()
   const [dragging, setDragging] = useState<string | null>(null)
   const [over, setOver] = useState<Status | null>(null)
@@ -171,6 +173,8 @@ export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
                     </div>
                   )}
 
+                  {progress[t.id] && <ChecklistBar p={progress[t.id]} />}
+
                   {/* Card footer: type, key and priority on the left, the
                       assignee avatar pushed to the right. */}
                   <div className="flex items-center gap-1.5">
@@ -199,6 +203,24 @@ export function Board({ slug, tasks }: { slug: string; tasks: Task[] }) {
           </section>
         )
       })}
+    </div>
+  )
+}
+
+/** A card's checklist progress: a thin bar and `☑ 2/4`, green once complete. */
+function ChecklistBar({ p }: { p: ChecklistProgress }) {
+  const complete = p.done === p.total
+  return (
+    <div className="mb-2 flex items-center gap-1.5" title={`Checklist: ${p.done} of ${p.total} done`}>
+      <div className="h-1 flex-1 overflow-hidden rounded-full bg-tt-column">
+        <div
+          className={`h-full rounded-full ${complete ? 'bg-tt-green' : 'bg-tt-blue'}`}
+          style={{ width: `${(p.done / p.total) * 100}%` }}
+        />
+      </div>
+      <span className={`text-[11px] font-medium ${complete ? 'text-tt-green' : 'text-tt-subtle'}`}>
+        ☑ {p.done}/{p.total}
+      </span>
     </div>
   )
 }

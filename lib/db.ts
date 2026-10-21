@@ -1,4 +1,4 @@
-import { Databases, ID, Query, AppwriteException, type Models } from 'node-appwrite'
+import { TablesDB, ID, Query, AppwriteException, type Models } from 'node-appwrite'
 import { serverClient, DB } from './appwrite'
 import { orderBetween } from './order.mjs'
 import { generateKey, hashKey } from './keys.mjs'
@@ -8,11 +8,13 @@ import {
   type ChecklistItem, type ChecklistProgress,
 } from './shared'
 
-// NOTE: written against node-appwrite's `Databases` API (createDocument/
-// listDocuments/etc, documents/$id) — see scripts/setup-appwrite.mjs's own
-// note on the same surface choice. If the installed SDK exposes `TablesDB`
-// instead, every call in this file needs the equivalent rename.
-const db = () => new Databases(serverClient())
+// Written against node-appwrite's `TablesDB` API (listRows/getRow/createRow/
+// updateRow/deleteRow, rows/$id). Ported off the legacy `Databases` API on
+// 2026-10-21: Appwrite 2.3 deprecates its documents.*/collections.*/attributes.*
+// scopes and no longer offers them on the console's API-key screen, so a key
+// minted there only works with this surface. The 'tasks'/'checklist' names in
+// the calls below are table ids (what Appwrite used to call collections).
+const db = () => new TablesDB(serverClient())
 
 // Query.limit(100) used to be the default here, which silently truncated any
 // list past 100 results with no error or warning. Verified against this
@@ -39,25 +41,25 @@ export type { Status, Task, TaskInput, Project, LogEntry, ChecklistItem, Checkli
 // Nothing fancier than that: no repository class, no query builder.
 
 async function listDocs<T>(
-  collection: string, queries: string[], toModel: (d: Models.DefaultDocument) => T,
+  collection: string, queries: string[], toModel: (d: Models.DefaultRow) => T,
 ): Promise<T[]> {
-  const res = await db().listDocuments(DB, collection, queries)
-  return res.documents.map(toModel)
+  const res = await db().listRows(DB, collection, queries)
+  return res.rows.map(toModel)
 }
 
 async function firstDoc<T>(
-  collection: string, queries: string[], toModel: (d: Models.DefaultDocument) => T,
+  collection: string, queries: string[], toModel: (d: Models.DefaultRow) => T,
 ): Promise<T | null> {
-  const res = await db().listDocuments(DB, collection, queries)
-  return res.documents[0] ? toModel(res.documents[0]) : null
+  const res = await db().listRows(DB, collection, queries)
+  return res.rows[0] ? toModel(res.rows[0]) : null
 }
 
 /**
  * Every id that lands in an Appwrite document path goes through here first.
- * An empty id collapses `/documents/<id>` to `/documents` — the *collection*
- * endpoint — and in Appwrite 1.9 that is the bulk API: `updateDocument(DB,
+ * An empty id collapses `/rows/<id>` to `/rows` — the *table*
+ * endpoint — and in Appwrite 1.9 that is the bulk API: `updateRow(DB,
  * 'tasks', '', { status })` is accepted as "update every row in tasks" and
- * silently rewrites the whole collection. Found the hard way, on a live
+ * silently rewrites the whole table. Found the hard way, on a live
  * board. One guard here covers every door (REST, MCP, Server Actions),
  * which is why it lives beside the call helpers and not in each caller.
  */
@@ -67,21 +69,21 @@ const docId = (id: string): string => {
 }
 
 async function docById<T>(
-  collection: string, id: string, toModel: (d: Models.DefaultDocument) => T,
+  collection: string, id: string, toModel: (d: Models.DefaultRow) => T,
 ): Promise<T | null> {
   try {
-    return toModel(await db().getDocument(DB, collection, docId(id)))
+    return toModel(await db().getRow(DB, collection, docId(id)))
   } catch (e) {
     // Only a real "no such document" is absence. Anything else — a network
     // failure, an unauthorized key, a malformed id, a misconfigured
     // collection — must propagate, not be reported to the caller as a 404.
     // Verified against live Appwrite: not-found is an AppwriteException with
-    // code 404 and type 'document_not_found' specifically. A bad id is code
+    // code 404 and type 'row_not_found' specifically. A bad id is code
     // 400 general_argument_invalid; an unauthorized key is 401
-    // user_unauthorized; an unknown collection is 404 collection_not_found
+    // user_unauthorized; an unknown table is 404 table_not_found
     // (a real config error, not a missing document); a network failure
     // isn't an AppwriteException at all (it's a plain fetch TypeError).
-    if (e instanceof AppwriteException && e.code === 404 && e.type === 'document_not_found') {
+    if (e instanceof AppwriteException && e.code === 404 && e.type === 'row_not_found') {
       return null
     }
     throw e
@@ -89,23 +91,23 @@ async function docById<T>(
 }
 
 async function insertDoc<T>(
-  collection: string, data: Record<string, unknown>, toModel: (d: Models.DefaultDocument) => T,
+  collection: string, data: Record<string, unknown>, toModel: (d: Models.DefaultRow) => T,
 ): Promise<T> {
-  return toModel(await db().createDocument(DB, collection, ID.unique(), data))
+  return toModel(await db().createRow(DB, collection, ID.unique(), data))
 }
 
 async function patchDoc<T>(
-  collection: string, id: string, data: Record<string, unknown>, toModel: (d: Models.DefaultDocument) => T,
+  collection: string, id: string, data: Record<string, unknown>, toModel: (d: Models.DefaultRow) => T,
 ): Promise<T> {
-  return toModel(await db().updateDocument(DB, collection, docId(id), data))
+  return toModel(await db().updateRow(DB, collection, docId(id), data))
 }
 
 // ----------------------------------------------------------------------------
 
 // Models.Document has no field index signature; DefaultDocument does, and is
-// what listDocuments/createDocument/updateDocument actually resolve to when
+// what listRows/createRow/updateRow actually resolve to when
 // called without an explicit generic (as every call in this file does).
-const toProject = (d: Models.DefaultDocument): Project => ({
+const toProject = (d: Models.DefaultRow): Project => ({
   id: d.$id,
   name: d.name as string,
   slug: d.slug as string,
@@ -131,16 +133,16 @@ export async function createProject(name: string): Promise<Project> {
 }
 
 export async function setArchived(id: string, archived: boolean): Promise<void> {
-  await db().updateDocument(DB, 'projects', docId(id), { archived })
+  await db().updateRow(DB, 'projects', docId(id), { archived })
 }
 
 // Not in the original task interface list; added for the probe script's
 // cleanup and because later tasks will want it too.
 export async function deleteProject(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'projects', docId(id))
+  await db().deleteRow(DB, 'projects', docId(id))
 }
 
-const toTask = (d: Models.DefaultDocument): Task => ({
+const toTask = (d: Models.DefaultRow): Task => ({
   id: d.$id,
   projectId: d.projectId as string,
   title: d.title as string,
@@ -205,23 +207,23 @@ export async function getTask(id: string): Promise<Task | null> {
 export async function findTasksByIdPrefix(
   prefix: string, limit = 5,
 ): Promise<{ id: string; title: string }[]> {
-  const res = await db().listDocuments(DB, 'tasks', [
+  const res = await db().listRows(DB, 'tasks', [
     Query.startsWith('$id', docId(prefix)),
     Query.select(['title']),
     Query.limit(limit),
   ])
-  return res.documents.map(d => ({ id: d.$id, title: d.title as string }))
+  return res.rows.map(d => ({ id: d.$id, title: d.title as string }))
 }
 
 /** One past the last card in a column, so new tasks land at the bottom. */
 async function bottomOrder(projectId: string, status: Status): Promise<number> {
-  const res = await db().listDocuments(DB, 'tasks', [
+  const res = await db().listRows(DB, 'tasks', [
     Query.equal('projectId', projectId),
     Query.equal('status', status),
     Query.orderDesc('order'),
     Query.limit(1),
   ])
-  const last = res.documents[0]
+  const last = res.rows[0]
   return orderBetween(last ? (last.order as number) : null, null)
 }
 
@@ -270,10 +272,10 @@ export async function updateTask(id: string, patch: Partial<TaskInput>): Promise
 // included) can forget them.
 export async function deleteTask(id: string): Promise<void> {
   await deleteChecklist(id)
-  await db().deleteDocument(DB, 'tasks', docId(id))
+  await db().deleteRow(DB, 'tasks', docId(id))
 }
 
-const toLog = (d: Models.DefaultDocument): LogEntry => ({
+const toLog = (d: Models.DefaultRow): LogEntry => ({
   id: d.$id,
   taskId: d.taskId as string,
   author: d.author as string,
@@ -315,13 +317,13 @@ export async function addLog(taskId: string, author: string, body: string): Prom
 export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<Map<string, LogEntry[]>> {
   if (taskIds.length === 0) return new Map()
   const perTaskLists = await Promise.all(taskIds.map(async taskId => {
-    const res = await db().listDocuments(DB, 'worklog', [
+    const res = await db().listRows(DB, 'worklog', [
       Query.equal('taskId', taskId),
       Query.orderDesc('$createdAt'),
       Query.limit(perTask),
     ])
     // Newest first from the query; flip to chronological for the caller.
-    return [taskId, res.documents.map(toLog).reverse()] as const
+    return [taskId, res.rows.map(toLog).reverse()] as const
   }))
   return new Map(perTaskLists.filter(([, entries]) => entries.length > 0))
 }
@@ -334,14 +336,14 @@ export async function recentLogByTask(taskIds: string[], perTask = 3): Promise<M
 // live Appwrite, can remove what they created; nothing in app/ calls it.
 // Mirrors deleteTask/deleteProject above, added for the same reason.
 export async function deleteLog(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'worklog', docId(id))
+  await db().deleteRow(DB, 'worklog', docId(id))
 }
 
 // --- checklist ---------------------------------------------------------------
 // One document per item, not an array on the task: a tick is a write to one
 // item, so a human and an agent ticking different items at once both land.
 
-const toItem = (d: Models.DefaultDocument): ChecklistItem => ({
+const toItem = (d: Models.DefaultRow): ChecklistItem => ({
   id: d.$id,
   taskId: d.taskId as string,
   text: d.text as string,
@@ -395,7 +397,7 @@ export async function updateChecklistItem(
 }
 
 export async function deleteChecklistItem(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'checklist', docId(id))
+  await db().deleteRow(DB, 'checklist', docId(id))
 }
 
 /** One by one, never Appwrite's bulk delete — see docId for why. */
@@ -416,19 +418,19 @@ export async function checklistProgress(projectId: string): Promise<Record<strin
     // Annotated: reading `cursor` here and writing it from `res` below, both
     // in the same loop, is circular enough to trip tsc's inference of a
     // generic call's default type parameter (TS7022) without this.
-    const res: Models.DocumentList<Models.DefaultDocument> = await db().listDocuments(DB, 'checklist', [
+    const res: Models.RowList<Models.DefaultRow> = await db().listRows(DB, 'checklist', [
       Query.equal('projectId', docId(projectId)),
       Query.select(['taskId', 'done']),
       Query.limit(DEFAULT_LIST_LIMIT),
       ...(cursor ? [Query.cursorAfter(cursor)] : []),
     ])
-    for (const d of res.documents) {
+    for (const d of res.rows) {
       const p = (out[d.taskId as string] ??= { done: 0, total: 0 })
       p.total++
       if (d.done) p.done++
     }
-    if (res.documents.length < DEFAULT_LIST_LIMIT) return out
-    cursor = res.documents[res.documents.length - 1].$id
+    if (res.rows.length < DEFAULT_LIST_LIMIT) return out
+    cursor = res.rows[res.rows.length - 1].$id
   }
 }
 
@@ -442,7 +444,7 @@ export type ApiKey = {
   id: string; label: string; lastUsedAt: string | null; createdBy: string; createdAt: string
 }
 
-const toKey = (d: Models.DefaultDocument): ApiKey => ({
+const toKey = (d: Models.DefaultRow): ApiKey => ({
   id: d.$id,
   label: d.label as string,
   lastUsedAt: (d.lastUsedAt as string) ?? null,
@@ -468,7 +470,7 @@ export async function createKey(label: string, createdBy: string): Promise<{ key
 }
 
 export async function revokeKey(id: string): Promise<void> {
-  await db().deleteDocument(DB, 'api_keys', docId(id))
+  await db().deleteRow(DB, 'api_keys', docId(id))
 }
 
 export async function findKeyByHash(hash: string): Promise<ApiKey | null> {
@@ -486,7 +488,7 @@ export async function findKeyByHash(hash: string): Promise<ApiKey | null> {
  */
 export async function touchKey(id: string): Promise<void> {
   try {
-    await db().updateDocument(DB, 'api_keys', docId(id), { lastUsedAt: new Date().toISOString() })
+    await db().updateRow(DB, 'api_keys', docId(id), { lastUsedAt: new Date().toISOString() })
   } catch {
     // Recording last-use must never fail a request that already authenticated.
   }

@@ -80,8 +80,8 @@ In the Appwrite console:
    its name. `npm run setup` creates the collections *inside* this database
    but does not create the database itself — this is the step people miss.
 3. **Create an API key.** *Overview → Integrations → API keys → Create*, with
-   scopes `databases.*`, `collections.*`, `attributes.*`, `indexes.*`,
-   `documents.*` and `users.read`. Copy it now; Appwrite shows it once.
+   scopes `databases.*`, `tables.*`, `columns.*`, `indexes.*`,
+   `rows.*` and `users.read`. Copy it now; Appwrite shows it once.
 4. **Create your user.** *Auth → Create user*, with an email and password.
    There is no signup page in this app, by design.
 

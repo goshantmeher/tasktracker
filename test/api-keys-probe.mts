@@ -8,14 +8,14 @@ for (const l of readFileSync('.env.local', 'utf8').split('\n')) {
 const { createKey, listKeys, revokeKey, findKeyByHash, touchKey } = await import('../lib/db')
 const { resolveCaller } = await import('../lib/auth')
 const { generateKey, hashKey } = await import('../lib/keys.mjs')
-const { Databases } = await import('node-appwrite')
+const { TablesDB } = await import('node-appwrite')
 const { serverClient, DB } = await import('../lib/appwrite')
 
 // Reads the RAW Appwrite document directly (bypassing lib/db.ts's toKey
 // mapper, which can't reveal a field it doesn't map anyway) so PHASE 1B can
 // inspect literally everything Appwrite stored for a minted key.
-const rawDb = new Databases(serverClient())
-const getRaw = (id: string) => rawDb.getDocument(DB, 'api_keys', id)
+const rawDb = new TablesDB(serverClient())
+const getRaw = (id: string) => rawDb.getRow(DB, 'api_keys', id)
 
 const ids: string[] = []
 

@@ -19,9 +19,9 @@ for (const line of read('.env.local', 'utf8').split('\n')) {
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
 }
 
-const { Databases, Query, AppwriteException } = await import('node-appwrite')
+const { TablesDB, Query, AppwriteException } = await import('node-appwrite')
 const { serverClient, DB } = await import('../lib/appwrite.ts')
-const db = new Databases(serverClient())
+const db = new TablesDB(serverClient())
 
 const COLLECTIONS = ['projects', 'tasks', 'worklog', 'api_keys', 'checklist']
 
@@ -32,10 +32,10 @@ async function readAll(collection) {
   let cursor = null
   for (;;) {
     const q = [Query.limit(200), ...(cursor ? [Query.cursorAfter(cursor)] : [])]
-    const { documents } = await db.listDocuments(DB, collection, q)
-    out.push(...documents)
-    if (documents.length < 200) return out
-    cursor = documents[documents.length - 1].$id
+    const { rows } = await db.listRows(DB, collection, q)
+    out.push(...rows)
+    if (rows.length < 200) return out
+    cursor = rows[rows.length - 1].$id
   }
 }
 
@@ -63,16 +63,16 @@ if (!mode || mode === 'dump') {
     let updated = 0, recreated = 0
     for (const doc of docs) {
       if (!write) continue
-      // A blank/missing $id collapses updateDocument's path to the collection
+      // A blank/missing $id collapses updateRow's path to the collection
       // endpoint, which Appwrite treats as "update every row" — see docId's
       // comment in lib/db.ts for the same trap on the write side.
       if (!doc.$id) continue
       try {
-        await db.updateDocument(DB, c, doc.$id, fields(doc))
+        await db.updateRow(DB, c, doc.$id, fields(doc))
         updated++
       } catch (e) {
         if (!(e instanceof AppwriteException && e.code === 404)) throw e
-        await db.createDocument(DB, c, doc.$id, fields(doc))
+        await db.createRow(DB, c, doc.$id, fields(doc))
         recreated++
       }
     }
